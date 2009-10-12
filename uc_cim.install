@@ -1,0 +1,121 @@
+<?php
+// $Id$
+/**
+ * @file
+ * Ubercart Authorize.Net CIM Installation
+ */
+
+/**
+ * Implementation of hook_install().
+ */
+function uc_cim_install() {
+  drupal_install_schema('uc_cim');
+}
+
+/**
+ * Implementation of hook_schema().
+ */
+function uc_cim_schema() {
+  $schema['uc_cim_payment_profiles_TEST'] = array(
+    'fields' => array(
+      'customer_profile_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11'),
+      'customer_payment_profile_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11'),
+      'last_four' => array('type' => 'char', 'length' => '4', 'not null' => TRUE),
+      'cc_cvv' => array('type' => 'char', 'length' => '4', 'not null' => TRUE, 'default' => '000'),
+      'cc_type' => array('type' => 'varchar', 'length' => '255', 'not null' => TRUE),
+      'cc_exp_year' => array('type' => 'int', 'size' => 'small', 'not null' => TRUE, 'disp-width' => '6'),
+      'cc_exp_month' => array('type' => 'int', 'size' => 'tiny', 'not null' => TRUE, 'disp-width' => '4'),
+      'exp_notification' => array('type' => 'int', 'disp-width' => '11')
+    ),
+    'indexes' => array(
+      'customer_payment_profile_id' => array('customer_payment_profile_id'),
+      'customer_profile_id' => array('customer_profile_id')),
+  );
+
+  $schema['uc_cim_TEST'] = array(
+    'fields' => array(
+      'uid' => array('type' => 'int', 'size' => 'medium', 'not null' => TRUE, 'disp-width' => '9'),
+      'customer_profile_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11')),
+    'primary key' => array('uid'),
+  );
+
+  $schema['uc_cim_payment_profiles'] = array(
+    'fields' => array(
+      'customer_profile_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11'),
+      'customer_payment_profile_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11'),
+      'last_four' => array('type' => 'char', 'length' => '4', 'not null' => TRUE),
+      'cc_cvv' => array('type' => 'char', 'length' => '4', 'not null' => TRUE, 'default' => '000'),
+      'cc_type' => array('type' => 'varchar', 'length' => '255', 'not null' => TRUE),
+      'cc_exp_year' => array('type' => 'int', 'size' => 'small', 'not null' => TRUE, 'disp-width' => '6'),
+      'cc_exp_month' => array('type' => 'int', 'size' => 'tiny', 'not null' => TRUE, 'disp-width' => '4'),
+      'exp_notification' => array('type' => 'int', 'disp-width' => '11')
+    ),
+    'indexes' => array(
+      'customer_payment_profile_id' => array('customer_payment_profile_id'),
+      'customer_profile_id' => array('customer_profile_id')),
+  );
+
+  $schema['uc_cim'] = array(
+    'fields' => array(
+      'uid' => array('type' => 'int', 'size' => 'medium', 'not null' => TRUE, 'disp-width' => '9'),
+      'customer_profile_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11')),
+    'primary key' => array('uid'),
+  );
+
+  $schema['uc_payment_cim'] = array(
+    'fields' => array(
+      'order_id' => array('type' => 'int', 'size' => 'medium', 'not null' => TRUE, 'disp-width' => '9'),
+      'cim_ppid' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11')),
+    'indexes' => array(
+      'order_id' => array('order_id')),
+  );
+  return $schema;
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function uc_cim_uninstall() {
+  drupal_uninstall_schema('uc_cim');
+}
+
+/*
+ * Upgrade 1
+ */
+function uc_cim_update_1() {
+  $ret = array();
+  switch ($GLOBALS['db_type']) {
+    case 'mysql':
+    case 'mysqli':
+
+      $ret[] = update_sql("CREATE TABLE {uc_cim_TEST} (
+        uid mediumint(9) NOT NULL,
+				customer_profile_id int(11) NOT NULL,
+				PRIMARY KEY uid (uid)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */");
+
+      $ret[] = update_sql("CREATE TABLE {uc_cim_payment_profiles_TEST} (
+				customer_profile_id int(11) NOT NULL,
+				customer_payment_profile_id int(11) NOT NULL,
+				last_four char(4) NOT NULL,
+				cc_cvv char(4) NOT NULL,
+				cc_type varchar(255) NOT NULL,
+				cc_exp_year smallint(6) NOT NULL,
+				cc_exp_month tinyint(4) NOT NULL,
+				KEY customer_profile_id (customer_profile_id),
+				KEY customer_payment_profile_id (customer_payment_profile_id)
+      ) /*!40100 DEFAULT CHARACTER SET UTF8 */ ");
+    break;
+  }
+  return $ret;
+}
+
+/**
+ * Add notification timestamp for expiring credit cards.
+ */
+function uc_cim_update_6202(&$sandbox = NULL) {
+  $ret = array();
+  db_add_field($ret, 'uc_cim_payment_profiles', 'exp_notification', array('type' => 'int', 'disp-width' => '11'));
+  db_add_field($ret, 'uc_cim_payment_profiles_TEST', 'exp_notification', array('type' => 'int', 'disp-width' => '11'));
+  return $ret;
+}

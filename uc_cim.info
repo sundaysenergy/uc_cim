@@ -1,0 +1,7 @@
+; $Id$
+name = Authorize.net CIM gateway 
+description = "The Authorize.net Customer Information Manager gateway."
+dependencies[] = uc_payment
+dependencies[] = uc_credit
+package = Ubercart - payment
+core = 6.x

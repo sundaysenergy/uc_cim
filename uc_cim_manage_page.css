@@ -1,0 +1,11 @@
+/* The radio buttons don't apply on this page, but we are leveraging the form for the sake of reusable UI.  
+Hide the radio buttons for good measure*/
+.choose-credit-card input, #edit-cards-0-wrapper {
+  display:none;
+}
+
+/* On the managment page, these elements have plenty of space to take up the whole page width.  
+Plus, there is no way to get the submit button in a normal spot without overriding  the already overrloaded form theming function. */
+#uc-cim-manage-page-form div.choose-credit-card, #uc-cim-manage-page-form div.enter-new-credit-card {
+  float:none;
+}
