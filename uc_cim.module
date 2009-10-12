@@ -10,7 +10,10 @@
  * For help integrating this module or setting up an Authorize.net CIM gateway and
  * Merchant Account, please contact chadcrew  gmail.com
  *
- * Ported, patched, revised, and extended by RSTaylor
+ * Ported by justindodge
+ * 
+ * Patched, revised, and extended by RSTaylor
+ *
  * TODO:
  *   [ ] Admin report of card expiration dates
  */
