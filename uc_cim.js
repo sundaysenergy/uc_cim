@@ -1,4 +1,3 @@
-// $Id$
 
 /* Copied from uc_cart.js and revised to support uc_cim css selectors */
 
