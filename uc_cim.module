@@ -17,7 +17,7 @@
  *   [ ] Admin report of card expiration dates
  */
 
-require_once 'uc_cim.ca.inc';
+require_once 'includes/uc_cim.ca.inc';
 
 /* ******************************************************************************
  * Drupal Hooks
@@ -33,7 +33,7 @@ function uc_cim_menu() {
       'page callback' => 'uc_cim_management',
       'access arguments' => array('process credit cards'),
       'type' => MENU_NORMAL_ITEM,
-      'file' => 'uc_cim.pages.inc',
+      'file' => 'includes/uc_cim.pages.inc',
     );
 
     $items['admin/store/customers/cim/%/delete'] = array(
@@ -42,7 +42,7 @@ function uc_cim_menu() {
       'page arguments' => array(4),
       'access arguments' => array('process credit cards'),
       'type' => MENU_NORMAL_ITEM,
-      'file' => 'uc_cim.pages.inc',
+      'file' => 'includes/uc_cim.pages.inc',
     );
 
       //Charge or edit a CIM stored card from the order page
@@ -54,7 +54,7 @@ function uc_cim_menu() {
         'page arguments' => array(3),
         'access arguments' => array('process credit cards'),
         'type' => MENU_CALLBACK,
-        'file' => 'uc_cim.pages.inc',
+        'file' => 'includes/uc_cim.pages.inc',
       );
 
       //Admin edit card
@@ -66,7 +66,7 @@ function uc_cim_menu() {
         'page arguments' => array(3),
         'access arguments' => array('process credit cards'),
         'type' => MENU_CALLBACK,
-        'file' => 'uc_cim.pages.inc',
+        'file' => 'includes/uc_cim.pages.inc',
       );
 
       //User edit card - arg(2) should contain the cim_ppid
@@ -76,7 +76,7 @@ function uc_cim_menu() {
         'page arguments' => array(2),
         'access callback' => 'user_is_logged_in',
         'type' => MENU_CALLBACK,
-        'file' => 'uc_cim.pages.inc',
+        'file' => 'includes/uc_cim.pages.inc',
       );
 
       //Refund or void a CIM stored payment from the order page
@@ -88,7 +88,7 @@ function uc_cim_menu() {
         'page arguments' => array('uc_cim_refund_form', 3, 5),
         'access arguments' => array('process credit cards'),
         'type' => MENU_CALLBACK,
-        'file' => 'uc_cim.pages.inc',
+        'file' => 'includes/uc_cim.pages.inc',
       );
       $items['user/%user/creditcards'] = array(
         'title' => 'Manage Credit Cards',
@@ -97,7 +97,7 @@ function uc_cim_menu() {
         'access callback' => 'uc_cim_manage_cards_access',
         'access arguments' => array(1),
         'type' => MENU_LOCAL_TASK,
-        'file' => 'uc_cim.pages.inc',
+        'file' => 'includes/uc_cim.pages.inc',
       );
   return $items;
 }
@@ -109,15 +109,15 @@ function uc_cim_theme($existing, $type, $theme, $path) {
   return array(
     'uc_cim_credit_form' => array(
       'arguments' => array('form' => NULL),
-      'file' => 'uc_cim.theme.inc',
+      'file' => 'includes/uc_cim.theme.inc',
     ),
     'uc_cim_edit_card_form' => array(
       'arguments' => array('form' => NULL),
-      'file' => 'uc_cim.theme.inc',
+      'file' => 'includes/uc_cim.theme.inc',
     ),
     'uc_cim_refund_form' => array(
       'arguments' => array('form' => NULL),
-      'file' => 'uc_cim.theme.inc',
+      'file' => 'includes/uc_cim.theme.inc',
     ),
   );
 }
