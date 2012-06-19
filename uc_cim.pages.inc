@@ -5,6 +5,23 @@
  * UC CIM Pages
  */
 
+//Edit card info
+function uc_admin_edit_card($user_id) {
+
+  //Display link back to this customer's orders to
+  $output .= '<p>To update any of the credit card information you must re-enter the credit card number.</p>';
+
+  //Get the cim_ppid to edit
+  if (is_numeric(arg(5))) $payment_profile_id = arg(5);
+
+  //Get the form
+  $output .= '<div id="error-output"></div>';
+  $output .= drupal_get_form('uc_cim_edit_card_form', $user_id, $payment_profile_id);
+
+  return $output;
+
+}
+
 function uc_user_edit_card($payment_profile_id) {
   global $user;
 

@@ -74,6 +74,7 @@ function uc_cim_menu() {
         'page arguments' => array(3),
         'access arguments' => array('process credit cards'),
         'type' => MENU_CALLBACK
+        'file' => 'uc_cim.pages.inc',
       );
 
       //User edit card - arg(2) should contain the cim_ppid
@@ -1273,23 +1274,6 @@ function uc_cim_terminal_form_submit($form, $form_state) {
   $data = array('ppid' => $formvalues['payment_profile_id']);
   $data = serialize($data);
   uc_payment_process('credit', $formvalues['order_id'], $formvalues['amount'], $data, FALSE, 'cim', TRUE);
-}
-
-//Edit card info
-function uc_admin_edit_card($user_id) {
-
-  //Display link back to this customer's orders to
-  $output .= '<p>To update any of the credit card information you must re-enter the credit card number.</p>';
-
-  //Get the cim_ppid to edit
-  if (is_numeric(arg(5))) $payment_profile_id = arg(5);
-
-  //Get the form
-  $output .= '<div id="error-output"></div>';
-  $output .= drupal_get_form('uc_cim_edit_card_form', $user_id, $payment_profile_id);
-
-  return $output;
-
 }
 
 function uc_cim_edit_card_form($form_state, $user_id, $payment_profile_id = NULL) {
