@@ -64,7 +64,7 @@ function uc_cim_menu() {
         'page callback' => 'uc_cim_terminal',
         'page arguments' => array(3),
         'access arguments' => array('process credit cards'),
-        'type' => MENU_CALLBACK
+        'type' => MENU_CALLBACK,
         'file' => 'uc_cim.pages.inc',
       );
 
@@ -76,7 +76,7 @@ function uc_cim_menu() {
         'page callback' => 'uc_admin_edit_card',
         'page arguments' => array(3),
         'access arguments' => array('process credit cards'),
-        'type' => MENU_CALLBACK
+        'type' => MENU_CALLBACK,
         'file' => 'uc_cim.pages.inc',
       );
 
@@ -86,7 +86,7 @@ function uc_cim_menu() {
         'page callback' => 'uc_user_edit_card',
         'page arguments' => array(2),
         'access callback' => 'user_is_logged_in',
-        'type' => MENU_CALLBACK
+        'type' => MENU_CALLBACK,
         'file' => 'uc_cim.pages.inc',
       );
 
@@ -98,7 +98,7 @@ function uc_cim_menu() {
         'page callback' => 'drupal_get_form',
         'page arguments' => array('uc_cim_refund_form', 3, 5),
         'access arguments' => array('process credit cards'),
-        'type' => MENU_CALLBACK
+        'type' => MENU_CALLBACK,
         'file' => 'uc_cim.pages.inc',
       );
       $items['user/%user/creditcards'] = array(
