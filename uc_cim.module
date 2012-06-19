@@ -20,19 +20,8 @@
 require_once 'uc_cim.ca.inc';
 
 /* ******************************************************************************
- * Drupal and Ubercart Hook Functions
+ * Drupal Hooks
  * *****************************************************************************/
-
-/**
- * Implementation of hook_uc_message().
- */
-function uc_cim_uc_message() {
-  $messages['uc_cim_expiring_subject'] = t('[store-name]: Billing info needs to be updated.');
-  $messages['uc_cim_expiring_message'] = t("[user], \n\nYour billing information has a credit card on file which is expired or will be expiring soon.\n\nAccording to our information, [card-type] with last four digits \"[last-four]\" [expiration-message].\n\nTo avoid problems with your membership, please login and update your billing info.\n\nThank you, \n\n[store-name]\n[site-slogan]");
-
-  return $messages;
-}
-
 
 /**
  * Implementation of hook_menu().
@@ -131,6 +120,75 @@ function uc_cim_theme($existing, $type, $theme, $path) {
       'file' => 'uc_cim.theme.inc',
     ),
   );
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function uc_cim_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'uc_payment_by_order_form') {
+    //Add a refund link to the payments table form, if there is a transaction id stored in the serialized data (perfomance issue???)
+
+    $order = uc_order_load($form['order_id']['#value']);
+    $payments = uc_payment_load_payments($order->order_id);
+
+    if ($payments !== FALSE) {
+      foreach ($payments as $payment) {
+        $data = unserialize($payment->data);
+        if ($data['transaction_id']) {
+          $refund = l(t('Refund'), 'admin/store/orders/'. $order->order_id .'/payments/'. $payment->receipt_id .'/refund');
+          $form['payments'][$payment->receipt_id]['action']['#value'] .= '<br/>'. $refund;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implementation of hook_mail().
+ * TODO:
+ *   [ ] move subjects and bodies into variables set in admin interface
+ */
+function uc_cim_mail($key, &$message, $params) {
+  $language = $message['language'];
+  switch ($key) {
+    case 'error_notice':
+      $variables = array(
+        '!site' => check_plain( variable_get('site_name', 'your website') ),
+        '!error_type' => check_plain( $params['error_type'] ),
+        '!error_message' => check_plain( $params['error_message'] ),
+      );
+      $message['subject'] = t('Notification from !site', $variables, $language->language);
+      $message['body'][] = t("An error has occurred while attempting to communicate with Authorize.net.\nThe site may be unable to process credit cards and/or customer information management functions.\n\nError type: !error_type\nError message: !error_message\n\n", $variables, $language->language);
+      break;
+  }
+}
+
+/**
+ * Implementation of hook_cron().
+ */
+function uc_cim_cron() {
+  // notify customers & admin of credit card expiration
+  $sql = 'SELECT * FROM {'. uc_cim_table('uc_cim_payment_profiles') .'} p LEFT JOIN {'. uc_cim_table('uc_cim') .'} c USING(customer_profile_id) LEFT JOIN {users} u USING( uid ) WHERE cc_exp_year <= %d AND cc_exp_month <= %d AND exp_notification IS NULL';
+  $result = db_query($sql, date('Y'), date('m'));
+  while ($row = db_fetch_object($result)) {
+    $account = user_load(array('uid' => $row->uid));
+    ca_pull_trigger('uc_cim_notify_expiring', $account, $row);
+  }
+}
+
+/* ******************************************************************************
+ * Ubercart Hooks
+ * *****************************************************************************/
+
+/**
+ * Implementation of hook_uc_message().
+ */
+function uc_cim_uc_message() {
+  $messages['uc_cim_expiring_subject'] = t('[store-name]: Billing info needs to be updated.');
+  $messages['uc_cim_expiring_message'] = t("[user], \n\nYour billing information has a credit card on file which is expired or will be expiring soon.\n\nAccording to our information, [card-type] with last four digits \"[last-four]\" [expiration-message].\n\nTo avoid problems with your membership, please login and update your billing info.\n\nThank you, \n\n[store-name]\n[site-slogan]");
+
+  return $messages;
 }
 
 /**
@@ -286,27 +344,52 @@ function uc_cim_order($op, &$arg1, $arg2) {
   }
 }
 
+/* ******************************************************************************
+ * Token Hooks
+ * *****************************************************************************/
+
 /**
- * Implementation of hook_form_alter().
+ * Implementation of hook_token_values().
  */
-function uc_cim_form_alter(&$form, &$form_state, $form_id) {
-  if ($form_id == 'uc_payment_by_order_form') {
-    //Add a refund link to the payments table form, if there is a transaction id stored in the serialized data (perfomance issue???)
-
-    $order = uc_order_load($form['order_id']['#value']);
-    $payments = uc_payment_load_payments($order->order_id);
-
-    if ($payments !== FALSE) {
-      foreach ($payments as $payment) {
-        $data = unserialize($payment->data);
-        if ($data['transaction_id']) {
-          $refund = l(t('Refund'), 'admin/store/orders/'. $order->order_id .'/payments/'. $payment->receipt_id .'/refund');
-          $form['payments'][$payment->receipt_id]['action']['#value'] .= '<br/>'. $refund;
-        }
-      }
+function uc_cim_token_values($type, $object = NULL, $options = array()) {
+  if ($type == 'uc_cim_payment_profile') {
+    $payment_profile = $object;
+    $tokens['uid'] = $payment_profile->uid;
+    $tokens['customer-profile-id'] = $payment_profile->customer_profile_id;
+    $tokens['payment-profile-id'] = $payment_profile->customer_payment_profile_id;
+    $tokens['last-four'] = sprintf( "%04d", $payment_profile->last_four );
+    $tokens['card-type'] = check_plain($payment_profile->cc_type);
+    $tokens['expiration-year'] = sprintf( "%04d", $payment_profile->cc_exp_year );
+    $tokens['expiration-month'] = sprintf( "%02d", $payment_profile->cc_exp_month );
+    if ( $payment_profile->cc_exp_year <= date('Y') && $payment_profile->cc_exp_month < date('m')) {
+      $tokens['expiration-message'] = t('expired on @m/@y', array('@m' => sprintf( "%02d", $payment_profile->cc_exp_month ), '@y' => sprintf( "%04d", $payment_profile->cc_exp_year )));
     }
+    else {
+      $tokens['expiration-message'] = t('will expire on @m/@y', array('@m' => sprintf( "%02d", $payment_profile->cc_exp_month ), '@y' => sprintf( "%04d", $payment_profile->cc_exp_year )));
+    }
+    $tokens['payment-profile-edit-link'] = l(t('edit your billing information'), 'user/billing/'. $payment_profile->customer_payment_profile_id, array('absolute' => TRUE));
+    return $tokens;
   }
 }
+
+/**
+ * Implementation of hook_token_list().
+ */
+function uc_cim_token_list($type = 'all') {
+  if ($type == 'uc_cim_payment_profile' || $type == 'all') {
+    $tokens['uc_cim_payment_profile']['uid'] = t('The user id of the payment profile');
+    $tokens['uc_cim_payment_profile']['customer-profile-id'] = t('The CIM customer profile id of the user');
+    $tokens['uc_cim_payment_profile']['payment-profile-id'] = t('The CIM payment profile id of this credit card');
+    $tokens['uc_cim_payment_profile']['last-four'] = t('Last four digits of the credit card');
+    $tokens['uc_cim_payment_profile']['card-type'] = t('Credit card type, if known');
+    $tokens['uc_cim_payment_profile']['expiration-year'] = t('Expiration year of this credit card');
+    $tokens['uc_cim_payment_profile']['expiration-month'] = t('Expiration month of this credit card');
+    $tokens['uc_cim_payment_profile']['expiration-message'] = t('Expiration message, depending on date.  Either "will expire on mm/yyyy" or "expired on mm/yyyy".');
+    $tokens['uc_cim_payment_profile']['payment-profile-edit-link'] = t('Link to edit billing info.');
+    return $tokens;
+  }
+}
+
 
 /* END HOOKS */
 
@@ -2098,20 +2181,6 @@ function uc_cim_numeric_entities($string) {
 }
 
 /**
- * Implementation of hook_cron().
- */
-function uc_cim_cron() {
-  // notify customers & admin of credit card expiration
-  $sql = 'SELECT * FROM {'. uc_cim_table('uc_cim_payment_profiles') .'} p LEFT JOIN {'. uc_cim_table('uc_cim') .'} c USING(customer_profile_id) LEFT JOIN {users} u USING( uid ) WHERE cc_exp_year <= %d AND cc_exp_month <= %d AND exp_notification IS NULL';
-  $result = db_query($sql, date('Y'), date('m'));
-  while ($row = db_fetch_object($result)) {
-    $account = user_load(array('uid' => $row->uid));
-    ca_pull_trigger('uc_cim_notify_expiring', $account, $row);
-  }
-}
-
-
-/**
  * Optionally send notification on critical error, such as Authorize.net
  * not responding.
  * Sends to configured address, or store admin address if none is configured,
@@ -2132,68 +2201,5 @@ function uc_cim_notify_error($error_type, $error_message) {
       drupal_mail('uc_cim', 'error_notice', $to, language_default(), $params, NULL, TRUE);
       flood_register_event('cim_error_notice');
     }
-  }
-}
-
-/**
- * Send notification emails.
- * TODO:
- *   [ ] move subjects and bodies into variables set in admin interface
- */
-function uc_cim_mail($key, &$message, $params) {
-  $language = $message['language'];
-  switch ($key) {
-    case 'error_notice':
-      $variables = array(
-        '!site' => check_plain( variable_get('site_name', 'your website') ),
-        '!error_type' => check_plain( $params['error_type'] ),
-        '!error_message' => check_plain( $params['error_message'] ),
-      );
-      $message['subject'] = t('Notification from !site', $variables, $language->language);
-      $message['body'][] = t("An error has occurred while attempting to communicate with Authorize.net.\nThe site may be unable to process credit cards and/or customer information management functions.\n\nError type: !error_type\nError message: !error_message\n\n", $variables, $language->language);
-      break;
-  }
-}
-
-
-/**
- * Implementation of hook_token_values().
- */
-function uc_cim_token_values($type, $object = NULL, $options = array()) {
-  if ($type == 'uc_cim_payment_profile') {
-    $payment_profile = $object;
-    $tokens['uid'] = $payment_profile->uid;
-    $tokens['customer-profile-id'] = $payment_profile->customer_profile_id;
-    $tokens['payment-profile-id'] = $payment_profile->customer_payment_profile_id;
-    $tokens['last-four'] = sprintf( "%04d", $payment_profile->last_four );
-    $tokens['card-type'] = check_plain($payment_profile->cc_type);
-    $tokens['expiration-year'] = sprintf( "%04d", $payment_profile->cc_exp_year );
-    $tokens['expiration-month'] = sprintf( "%02d", $payment_profile->cc_exp_month );
-    if ( $payment_profile->cc_exp_year <= date('Y') && $payment_profile->cc_exp_month < date('m')) {
-      $tokens['expiration-message'] = t('expired on @m/@y', array('@m' => sprintf( "%02d", $payment_profile->cc_exp_month ), '@y' => sprintf( "%04d", $payment_profile->cc_exp_year )));
-    }
-    else {
-      $tokens['expiration-message'] = t('will expire on @m/@y', array('@m' => sprintf( "%02d", $payment_profile->cc_exp_month ), '@y' => sprintf( "%04d", $payment_profile->cc_exp_year )));
-    }
-    $tokens['payment-profile-edit-link'] = l(t('edit your billing information'), 'user/billing/'. $payment_profile->customer_payment_profile_id, array('absolute' => TRUE));
-    return $tokens;
-  }
-}
-
-/**
- * Implementation of hook_token_list().
- */
-function uc_cim_token_list($type = 'all') {
-  if ($type == 'uc_cim_payment_profile' || $type == 'all') {
-    $tokens['uc_cim_payment_profile']['uid'] = t('The user id of the payment profile');
-    $tokens['uc_cim_payment_profile']['customer-profile-id'] = t('The CIM customer profile id of the user');
-    $tokens['uc_cim_payment_profile']['payment-profile-id'] = t('The CIM payment profile id of this credit card');
-    $tokens['uc_cim_payment_profile']['last-four'] = t('Last four digits of the credit card');
-    $tokens['uc_cim_payment_profile']['card-type'] = t('Credit card type, if known');
-    $tokens['uc_cim_payment_profile']['expiration-year'] = t('Expiration year of this credit card');
-    $tokens['uc_cim_payment_profile']['expiration-month'] = t('Expiration month of this credit card');
-    $tokens['uc_cim_payment_profile']['expiration-message'] = t('Expiration message, depending on date.  Either "will expire on mm/yyyy" or "expired on mm/yyyy".');
-    $tokens['uc_cim_payment_profile']['payment-profile-edit-link'] = t('Link to edit billing info.');
-    return $tokens;
   }
 }
