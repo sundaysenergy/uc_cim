@@ -83,6 +83,7 @@ function uc_cim_menu() {
         'page arguments' => array(2),
         'access callback' => 'user_is_logged_in',
         'type' => MENU_CALLBACK
+        'file' => 'uc_cim.pages.inc',
       );
 
       //Refund or void a CIM stored payment from the order page
@@ -1286,19 +1287,6 @@ function uc_admin_edit_card($user_id) {
   //Get the form
   $output .= '<div id="error-output"></div>';
   $output .= drupal_get_form('uc_cim_edit_card_form', $user_id, $payment_profile_id);
-
-  return $output;
-
-}
-
-function uc_user_edit_card($payment_profile_id) {
-  global $user;
-
-  //Display instructions to the user
-  $output .= '<p>To update any of your credit card information you must re-enter your credit card number.</p>';
-
-  //Get the form - with user's id
-  $output .= drupal_get_form('uc_cim_edit_card_form', $user->uid, $payment_profile_id);
 
   return $output;
 

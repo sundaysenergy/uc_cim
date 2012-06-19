@@ -5,6 +5,19 @@
  * UC CIM Pages
  */
 
+function uc_user_edit_card($payment_profile_id) {
+  global $user;
+
+  //Display instructions to the user
+  $output .= '<p>To update any of your credit card information you must re-enter your credit card number.</p>';
+
+  //Get the form - with user's id
+  $output .= drupal_get_form('uc_cim_edit_card_form', $user->uid, $payment_profile_id);
+
+  return $output;
+
+}
+
 /**
  * Menu callback
  * user/x/creditcards
