@@ -44,6 +44,7 @@ function uc_cim_menu() {
       'page callback' => 'uc_cim_management',
       'access arguments' => array('process credit cards'),
       'type' => MENU_NORMAL_ITEM,
+      'file' => 'uc_cim.pages.inc',
     );
 
     $items['admin/store/customers/cim/%/delete'] = array(
@@ -52,6 +53,7 @@ function uc_cim_menu() {
       'page arguments' => array(4),
       'access arguments' => array('process credit cards'),
       'type' => MENU_NORMAL_ITEM,
+      'file' => 'uc_cim.pages.inc',
     );
 
       //Charge or edit a CIM stored card from the order page
@@ -711,71 +713,6 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
   return $result;
 }
 
-/**
- * @todo This function should utilize callback arguments from the D6 menu system instead of checking arg()
- */
-function uc_cim_management() {
-
-  if (!is_numeric(arg(4))) {
-    //The table to get from depends on test mode or production mode - get the right one
-    $table = uc_cim_table('uc_cim');
-
-    //Get all profiles
-    $sql = "SELECT * FROM {". $table ."}";
-    $result = db_query($sql);
-    while ($getdata = db_fetch_array($result)) {
-      $row = array();
-      $row['data'][0] = $getdata['uid'];
-      $row['data'][1] = l($getdata['customer_profile_id'], 'admin/store/customers/cim/'. $getdata['customer_profile_id']);
-      $row['data'][2] = l('delete', 'admin/store/customers/cim/'. $getdata['customer_profile_id'] .'/delete');
-      $rows[] = $row;
-    }
-
-    $header = array('UID', 'Profile ID', 'Delete');
-    $output .= theme_table($header, $rows);
-  }
-  elseif (is_numeric(arg(4))) {
-
-    //Get profile details
-    $profile_id = arg(4);
-
-    //Build XML to post
-    $content =
-    '<?xml version="1.0" encoding="utf-8"?>'.
-    '<getCustomerProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
-    merchant_auth_xml() .
-      '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
-    '</getCustomerProfileRequest>';
-
-    //Send the XML via curl
-    $response = uc_cim_curl_send($content);
-
-    $output .= '<p>CIM Data Request Status: '. $response->messages->message->code .' ('. $response->messages->message->text .')</p>';
-    $output .= '<p>'. l('return to profile list', 'admin/store/customers/cim') .'</p>';
-
-    $output .= '<h2>Customer Profile:</h2>';
-    $output .= 'User ID: '. $response->profile->merchantCustomerId .'<br/>';
-    $output .= 'Description: '. $response->profile->description .'<br/>';
-    $output .= 'Email: '. $response->profile->email .'<br/>';
-    $output .= 'Profile ID: '. $response->profile->customerProfileId .'<br/>';
-
-    $output .= '<h2>Payment Profiles:</h2>';
-    foreach ($response->profile->paymentProfiles as $profile) {
-      $output .= '<div class="payment-profile">';
-      $output .= '<b>Payment Profile ID: </b>'. $profile->customerPaymentProfileId .'<br/>';
-      $output .= '<b>Billing Address:</b><br/>';
-      foreach ((array) $profile->billTo as $key => $value) {
-        $output .= $key .': '. $value .'<br/>';
-      }
-      $output .= '<b>Credit Card:</b>'. $profile->payment->creditCard->cardNumber .'<br/>';
-      $output .= '</div>';
-    }
-  }
-  //Add our CSS for some formatting
-  drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
-
-  return $output;
-}
 //CHECKOUT and ORDER screens
 function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-cim-billing-address-billing', $delivery_path = 'panes-delivery-delivery') {
 
@@ -2060,30 +1997,6 @@ function uc_cim_get_payment_profiles($profile_id, $payment_profile_id = NULL) {
     }
     return $payment_profiles;
   }
-}
-
-function uc_cim_delete_profile($profile_id) {
-  $response = delete_customer_profile_request($profile_id);
-
-  //The table to update depends on test mode or production mode - get the right one
-  $table = uc_cim_table('uc_cim_payment_profiles');
-
-  //Delete
-  $sql = "DELETE FROM {". $table ."} WHERE customer_profile_id = %d";
-  db_query($sql, $profile_id);
-
-  $table = uc_cim_table('uc_cim');
-  $sql = "DELETE FROM {". $table ."} WHERE customer_profile_id = %d";
-  db_query($sql, $profile_id);
-  if ($response->messages->message->code == 'I00001') {
-    drupal_set_message('The profile was successfully deleted');
-  }
-  else {
-    drupal_set_message('The profile was deleted from the local database, but errors were encountered through authorize.net: '. $response->messages->message->text);
-  }
-  drupal_goto('admin/store/customers/cim');
-
-  //@todo should we delete from uc_payment_cim as well?
 }
 
 function uc_cim_delete_payment_profile($profile_id, $payment_profile_id) {
