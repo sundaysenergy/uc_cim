@@ -225,6 +225,161 @@ function uc_user_edit_card($payment_profile_id) {
 
 }
 
+function uc_cim_edit_card_form($form_state, $user_id, $payment_profile_id = NULL) {
+
+  //Get the customers CIM profile id, or create a new one
+  $profile_id = uc_cim_get_profile_id($user_id);
+
+  //If this customer doesn't have an id yet, create it now
+  if (!$profile_id) {
+    $response = create_customer_profile_request($user_id);
+    $profile_id = $response->customerProfileId;
+  }
+  else {
+    if (is_numeric($payment_profile_id)) {
+      //If we're editing a card, get that card info now
+      $payment_profile_id = $payment_profile_id;
+      $database_profile = uc_cim_get_payment_profiles($profile_id, $payment_profile_id);
+      $response = get_customer_payment_profile_request($profile_id, $payment_profile_id);
+
+      if ($response->messages->message->code != 'I00001') {
+        $message = 'ERROR: '. $response->messages->message->code .' ('. $response->messages->message->text .')';
+        drupal_set_message($message, 'error');
+        drupal_goto($_GET['dest']);
+      }
+    }
+  }
+
+  //Create an object in the "order format"
+  $order->uid = $user_id;
+  $order->payment_details['cc_number'] = (string)$response->paymentProfile->payment->creditCard->cardNumber;
+  $order->payment_details['cc_type'] = $database_profile['cc_type'];
+  $order->payment_details['cc_exp_month'] = $database_profile['cc_exp_month'];
+  $order->payment_details['cc_exp_year'] = $database_profile['cc_exp_year'];
+  $order->order->payment_details['cc_type'] = $database_profile['cc_type'];
+  $order->billing_first_name = (string)$response->paymentProfile->billTo->firstName;
+  $order->billing_last_name = (string)$response->paymentProfile->billTo->lastName;
+  $order->billing_company = (string)$response->paymentProfile->billTo->company;
+  $order->billing_street1 = (string)$response->paymentProfile->billTo->address;
+  $order->billing_city = (string)$response->paymentProfile->billTo->city;
+  $order->billing_postal_code = (string)$response->paymentProfile->billTo->zip;
+  $country = db_result(db_query("SELECT country_id FROM {uc_countries} WHERE country_name LIKE '%s'", (string) $response->paymentProfile->billTo->country));
+  if ($country) {
+    $state_id = db_result(db_query("SELECT zone_id FROM {uc_zones} WHERE zone_code = '%s' AND zone_country_id=%d", (string) $response->paymentProfile->billTo->state, $country));
+    $order->billing_zone = $state_id;
+  }
+  $order->billing_country = $country;
+  $order->billing_phone = (string)$response->paymentProfile->billTo->phoneNumber;
+
+  //Get the credit card form
+  $credit_form['credit_card'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Credit card'),
+    '#attributes' => array('id' => 'credit-card'),
+  );
+  $credit_form['credit_card'] = array_merge($credit_form['credit_card'], uc_payment_method_credit_form(array(), $order));
+
+  //Get the billing address form
+  $pane = uc_checkout_pane_billing('view', $order, NULL);
+  unset($pane['contents']['copy_address']);
+  $pane['contents']['billing_address_select'] = uc_select_address($user_id, 'billing', "uc_cim_apply_address('billing', this.value);", $title = NULL, $icon_suffix = FALSE);
+  $pane_holder['billing-pane'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Billing address'),
+    '#attributes' => array('id' => 'billing-pane'),
+    '#theme' => $pane['theme'],
+  );
+  $address_form['billing-pane'] = array_merge($pane_holder['billing-pane'], $pane['contents']);
+
+  //Merge the forms and add some hidden feilds to carry our profile id's
+  $form = array_merge($credit_form, $address_form);
+  $form['profile_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $profile_id,
+  );
+  $form['payment_profile_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $payment_profile_id,
+  );
+
+  //Add a submit button
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit Changes'),
+  );
+
+  //Delete button
+  $form['delete'] = array(
+    '#type' => 'submit',
+    '#value' => t('Delete Credit Card'),
+    '#title' => t('Remove this credit card from you account.'),
+    '#attributes' => array('class' => 'negative'),
+  );
+
+  //Cancel button - link that returns to where you came from
+  $form['cancel'] = array(
+    '#value' => l('Cancel', $_GET['dest'], array('attributes' => array('class' => 'button negative'))),
+  );
+
+  //Add the javascript and css
+  drupal_add_js(drupal_get_path('module', 'uc_cim') .'/uc_cim.js');
+  //drupal_add_js(drupal_get_path('module', 'uc_payment') .'/uc_payment.js');
+  drupal_add_css(drupal_get_path('module', 'uc_cart') .'/uc_cart.css');
+
+  return $form;
+}
+
+function uc_cim_edit_card_form_validate($form, &$form_state) {
+  $formvalues = $form_state['values'];
+  //No validation for deleting...
+  if ($_POST['op'] == t('Delete Credit Card')) {
+    return;
+  }
+
+  //Dont attempt to validate credit cards with masked values (for when a customer is updating through user account interface)
+  if (stristr($formvalues['cc_number'], 'XXXX')) {
+    return;
+  }
+  $form_state['values']['cc_number'] = str_replace( ' ', '', trim( $form_state['values']['cc_number'] ) );
+  if (!_valid_card_number($form_state['values']['cc_number'])) {
+    form_set_error('cc_number', t('The credit card number is not valid.'));
+  }
+}
+
+function uc_cim_edit_card_form_submit(&$form, &$form_state) {
+  $formvalues = $form_state['values'];
+  //If the user pressed delete, remove the card from Auth.net and database
+  if ($_POST['op'] == t('Delete Credit Card')) {
+    $response = delete_customer_payment_profile_request($formvalues['profile_id'], $formvalues['payment_profile_id']);
+    $form_state['redirect'] = $_GET['dest'];
+    return;
+  }
+
+  //Create an object in the "order format" to pass to the create_payment_profile api.
+  uc_cim_create_order_object($order, $formvalues);
+
+  //Update payment profile
+  if (is_numeric($formvalues['payment_profile_id'])) {
+    $response = update_customer_payment_profile_request($formvalues['profile_id'], $order, $formvalues['payment_profile_id']);
+  }
+
+  //Or create a new payment profile
+  else {
+    $response = create_customer_payment_profile_request($formvalues['profile_id'], $order, $formvalues['payment_profile_id']);
+  }
+
+  //Process the response
+  if ($response->messages->message->code != 'I00001') {
+    drupal_set_message(t('There was an error processing your request. Pleast contact customer support for assistance'), 'error');
+    watchdog('uc_cim', 'Error edit credit card information for profile id '. $formvalues['profile_id'] .': '. $response->messages->message->text, array(), WATCHDOG_ERROR);
+  }
+  else {
+    drupal_set_message('Billing information successfully updated.');
+  }
+
+  $form_state['redirect'] = $_GET['dest'];
+}
+
 /**
  * Menu callback
  * user/x/creditcards
