@@ -1596,10 +1596,10 @@ function create_customer_profile_transaction_request($profile_id, $payment_profi
       if (!empty($description)) {
         $description .= ' / ';
       }
-      $description .= $product->title .' x'. $product->qty;
+      $description .= uc_cim_xml_clean($product->title . ' x' . $product->qty);
       if (is_array($product->data['attributes'])) {
         foreach ($product->data['attributes'] as $key => $value) {
-          $description .= ', '. $key .': '. $value;
+          $description .= uc_cim_xml_clean(', ' . $key . ': ' . $value);
         }
       }
     }
