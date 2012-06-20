@@ -227,48 +227,14 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
   }
   elseif ($response->directResponse) {
     // If we processed a transaction, we'll have a directResponse from the bank with the details.
-    $directResponse = explode(variable_get('cim_delimiter', ','), $response->directResponse);
-    if (!is_numeric($directResponse[0])) {
-      // wrong delimiter.  try the other one and log the problem
-      // If this still fails, the response should be handled correctly since
-      //   it is cast to an integer, but authorization code will be lost.
-      $delimiter = (variable_get('cim_delimiter', ',') == ',') ? '|' : ',';
-      $directResponse = explode($delimiter, $response->directResponse);
-      watchdog('uc_cim',
-        'Incorrect delimiter !delimiter set for response: !response. Raw CIM response: !message',
-        array(
-          '!delimiter' => variable_get('cim_delimiter', ','),
-          '!response' => $response->directResponse,
-          '!message' => $response->messages->message->text,
-        ),
-        WATCHDOG_WARNING
-      );
-    }
-    $bank_message = $directResponse[3];
+    $bank_message = _uc_cim_get_bank_message($response, 'directResponse');
   }
   elseif ($response->validationDirectResponse) {
     // If we failed to process the transaction but did perform a validation during payment profile
     // creation, we'll have a validationDirectResponse with the details. Note that the respose for
     // validate_customer_payment_profile_request is in directResonse. Go figure.
     // That's ok, though, it's handled above.
-    $directResponse = explode(variable_get('cim_delimiter', ','), $response->validationDirectResponse);
-    if (!is_numeric($directResponse[0])) {
-      // wrong delimiter.  try the other one and log the problem
-      // If this still fails, the response should be handled correctly since
-      //   it is cast to an integer, but authorization code will be lost.
-      $delimiter = (variable_get('cim_delimiter', ',') == ',') ? '|' : ',';
-      $directResponse = explode($delimiter, $response->validationDirectResponse);
-      watchdog('uc_cim',
-        'Incorrect delimiter !delimiter set for response: !response. Raw CIM response: !message',
-        array(
-          '!delimiter' => variable_get('cim_delimiter', ','),
-          '!response' => $response->directResponse,
-          '!message' => $response->messages->message->text,
-        ),
-        WATCHDOG_WARNING
-      );
-    }
-    $bank_message = $directResponse[3];
+    $bank_message = _uc_cim_get_bank_message($response, 'validationDirectResponse');
   }
   else {
     // This should never happen... but just in case...
@@ -349,4 +315,38 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
   $result['cim_ppid'] = $payment_profile_id;
 
   return $result;
+}
+
+
+/*******************************************************************************
+ * Helpers
+ ******************************************************************************/
+
+/**
+ * _uc_cim_get_bank_message
+ */
+function _uc_cim_get_bank_message($response, $key = 'directResponse') {
+  $delimiter = variable_get('cim_delimiter', ',');
+
+  $directResponse = explode($delimiter, $response->$key);
+
+  if (!is_numeric($directResponse[0])) {
+    // wrong delimiter.  try the other one and log the problem
+    // If this still fails, the response should be handled correctly since
+    // it is cast to an integer, but authorization code will be lost.
+    $delimiter = ($delimiter == ',') ? '|' : ',';
+
+    $directResponse = explode($delimiter, $response->$key);
+
+    watchdog('uc_cim',
+      'Incorrect delimiter !delimiter set for response: !response Raw CIM response: !raw_response',
+      array(
+        '!delimiter' => $delimiter,
+        '!response' => $response->directResponse, // @TODO: Should this be $response->$key
+        '!raw_response' => $response->messages->message->text
+      ),
+      WATCHDOG_WARNING
+    );
+  }
+  $bank_message = $directResponse[3];
 }
