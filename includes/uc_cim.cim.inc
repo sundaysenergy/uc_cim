@@ -428,6 +428,30 @@ function uc_cim_parse_return($response) {
 }
 
 /**
+ * Optionally send notification on critical error, such as Authorize.net
+ * not responding.
+ * Sends to configured address, or store admin address if none is configured,
+ * or site admin address if no store admin is configured.
+ */
+function uc_cim_notify_error($error_type, $error_message) {
+  if (variable_get('uc_cim_send_error_notifications', 1) && flood_is_allowed('cim_error_notice', variable_get('uc_cim_hourly_threshold', 3))) {
+    $params['error_type'] = $error_type;
+    $params['error_message'] = $error_message;
+    $to = variable_get('uc_cim_error_notifications_to', '');
+    if (!$to) {
+      if (!$to) {
+        $account = user_load(array('uid' => 1));
+        $to = $account->mail;
+      }
+    }
+    if ($to) {
+      drupal_mail('uc_cim', 'error_notice', $to, language_default(), $params, NULL, TRUE);
+      flood_register_event('cim_error_notice');
+    }
+  }
+}
+
+/**
  * merchant_auth_xml
  */
 function merchant_auth_xml() {
