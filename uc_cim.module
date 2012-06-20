@@ -1401,7 +1401,7 @@ function uc_recurring_uc_cim_fee_ops($context, $fee) {
  * Access callback for credit card management.
  */
 function uc_cim_manage_cards_access($account) {
-  return (($GLOBALS['user']->uid == $account->uid) || user_access('administer credit cards')) && $account->uid > 0;
+  return (($GLOBALS['user']->uid == $account->uid) || user_access('process credit cards')) && $account->uid > 0;
 }
 
 /* END Callbacks */
