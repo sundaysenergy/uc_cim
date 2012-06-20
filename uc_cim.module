@@ -17,6 +17,9 @@
  *   [ ] Admin report of card expiration dates
  */
 
+/**
+ * Conditional Actions
+ */
 require_once 'includes/uc_cim.ca.inc';
 
 /* ******************************************************************************
@@ -397,6 +400,10 @@ function uc_cim_token_list($type = 'all') {
 /* ******************************************************************************
  * Callback Functions, Forms, and Tables
  * *****************************************************************************/
+
+/**
+ * Callback function for CIM payment gateway
+ */
 function uc_cim_settings_form() {
   $form['cim_settings'] = array(
     '#type' => 'fieldset',
@@ -799,7 +806,9 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
   return $result;
 }
 
-//CHECKOUT and ORDER screens
+/**
+ * CHECKOUT and ORDER screens
+ */
 function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-cim-billing-address-billing', $delivery_path = 'panes-delivery-delivery') {
 
   //Add our css and revised javascript for copying addresses to our revised address form
@@ -1061,6 +1070,10 @@ function uc_checkout_pane_cim($op, &$arg1, $arg2) {
 
   }
 }
+
+/**
+ * uc_order_pane_cim
+ */
 function uc_order_pane_cim($op, $arg1) {
 
   drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
@@ -1201,6 +1214,9 @@ function uc_order_pane_cim($op, $arg1) {
   }
 }
 
+/**
+ * uc_payment_method_cim
+ */
 function uc_payment_method_cim($op, &$arg1, $silent = FALSE) {
   switch ($op) {
     //Called when you click the radio for this option in the payment method pane
@@ -1243,6 +1259,9 @@ function uc_cim_credit_card_form_drupal(&$form_state, $uid, $arg1) {
   return uc_cim_credit_card_form($uid, $arg1, 'billing');
 }
 
+/**
+ * uc_checkout_pane_cim_functionality
+ */
 function uc_checkout_pane_cim_functionality($op, &$arg1, $arg2) {
   switch ($op) {
     case 'view':
@@ -1255,6 +1274,7 @@ function uc_checkout_pane_cim_functionality($op, &$arg1, $arg2) {
     break;
   }
 }
+
 /**
  * Callback function for setting up a recurring fee
  */
@@ -1393,6 +1413,10 @@ function uc_cim_manage_cards_access($account) {
  * An API to create customer profiles, customer payment profiles, and transactions
  * for the Authorize.net CIM gateway.
  * *****************************************************************************/
+
+/**
+ * create_customer_profile_request
+ */
 function create_customer_profile_request($user_id) {
   //Load user
   $user = user_load(array('uid' => $user_id));
@@ -1424,6 +1448,9 @@ function create_customer_profile_request($user_id) {
   return $response;
 }
 
+/**
+ * create_customer_payment_profile_request
+ */
 function create_customer_payment_profile_request($profile_id, $order) {
 
   //Validate this payment profile in live mode for production sites.  This performs stronger card validation, but fails for test transactions.
@@ -1491,6 +1518,9 @@ function create_customer_payment_profile_request($profile_id, $order) {
   return $response;
 }
 
+/**
+ * create_customer_profile_transaction_request
+ */
 function update_customer_payment_profile_request($profile_id, $order, $payment_profile_id) {
 
   //Make expiration date month 2 digits
@@ -1554,6 +1584,9 @@ function update_customer_payment_profile_request($profile_id, $order, $payment_p
   return $response;
 }
 
+/**
+ * create_customer_profile_transaction_request
+ */
 function create_customer_profile_transaction_request($profile_id, $payment_profile_id, $order, $amount) {
 
   //Build the order description
@@ -1616,6 +1649,9 @@ function create_customer_profile_transaction_request($profile_id, $payment_profi
   return $response;
 }
 
+/**
+ * delete_customer_profile_request
+ */
 function delete_customer_profile_request($profile_id) {
   //Build XML to post
   $content =
@@ -1631,6 +1667,9 @@ function delete_customer_profile_request($profile_id) {
   return $response;
 }
 
+/**
+ * delete_customer_payment_profile_request
+ */
 function delete_customer_payment_profile_request($profile_id, $payment_profile_id) {
   // TODO: should check here if any recurring fees are using this payment profile?
   //Build XML to post
@@ -1658,7 +1697,9 @@ function delete_customer_payment_profile_request($profile_id, $payment_profile_i
   return $response;
 }
 
-
+/**
+ * get_customer_profile_request
+ */
 function get_customer_profile_request($profile_id) {
 
   //Build XML to post
@@ -1675,6 +1716,9 @@ function get_customer_profile_request($profile_id) {
   return $response;
 }
 
+/**
+ * get_customer_payment_profile_request
+ */
 function get_customer_payment_profile_request($profile_id, $payment_profile_id) {
 
   //Build XML to post
@@ -1692,6 +1736,9 @@ function get_customer_payment_profile_request($profile_id, $payment_profile_id) 
   return $response;
 }
 
+/**
+ * validate_customer_payment_profile_request
+ */
 function validate_customer_payment_profile_request($profile_id, $payment_profile_id) {
 
   //Validate this payment profile in live mode for production sites.  This performs stronger card validation, but fails for test transactions.
@@ -1718,6 +1765,10 @@ function validate_customer_payment_profile_request($profile_id, $payment_profile
   return $response;
 
 }
+
+/**
+ * uc_cim_refund
+ */
 function uc_cim_refund($order_id, $transaction_id, $last_four, $amount, $type = 'CREDIT') {
   global $user; //For order comment saving, NOT processing (use order->uid for that)
 
@@ -1802,6 +1853,10 @@ function uc_cim_refund($order_id, $transaction_id, $last_four, $amount, $type = 
 /* ******************************************************************************
  * Helper Functions
  * *****************************************************************************/
+
+/**
+ * uc_cim_save_profile_id
+ */
 function uc_cim_save_profile_id($user_id, $profile_id) {
   //The table to update depends on test mode or production mode - get the right one
   $table = uc_cim_table('uc_cim');
@@ -1814,6 +1869,9 @@ function uc_cim_save_profile_id($user_id, $profile_id) {
   }
 }
 
+/**
+ * uc_cim_save_payment_profile
+ */
 function uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $type = NULL, $exp_year = NULL, $exp_month = NULL) {
   //The table to update depends on test mode or production mode - get the right one
   $table = uc_cim_table('uc_cim_payment_profiles');
@@ -1829,6 +1887,9 @@ function uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_fou
   }
 }
 
+/**
+ * uc_cim_get_profile_id
+ */
 function uc_cim_get_profile_id($user_id) {
   //The table to get from depends on test mode or production mode - get the right one
   $table = uc_cim_table('uc_cim');
@@ -1840,6 +1901,9 @@ function uc_cim_get_profile_id($user_id) {
   return $profile_id;
 }
 
+/**
+ * uc_cim_get_payment_profiles
+ */
 function uc_cim_get_payment_profiles($profile_id, $payment_profile_id = NULL) {
    //The table to get from depends on test mode or production mode - get the right one
   $table = uc_cim_table('uc_cim_payment_profiles');
@@ -1865,6 +1929,9 @@ function uc_cim_get_payment_profiles($profile_id, $payment_profile_id = NULL) {
   }
 }
 
+/**
+ * uc_cim_delete_payment_profile
+ */
 function uc_cim_delete_payment_profile($profile_id, $payment_profile_id) {
   //The table to update depends on test mode or production mode - get the right one
   $table = uc_cim_table('uc_cim_payment_profiles');
@@ -1874,6 +1941,9 @@ function uc_cim_delete_payment_profile($profile_id, $payment_profile_id) {
   db_query($sql, $profile_id, $payment_profile_id);
 }
 
+/**
+ * uc_cim_curl_send
+ */
 function uc_cim_curl_send($content) {
   //Build the path to post to, depending on whether we're in test mode or not
   if (variable_get('cim_transaction_mode', 'test') == 'test') {
@@ -1915,6 +1985,9 @@ function uc_cim_curl_send($content) {
   return $response;
 }
 
+/**
+ * uc_cim_parse_return
+ */
 function uc_cim_parse_return($response) {
   $xml_raw = str_replace('xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd"', '', $response);
   try {
@@ -1928,6 +2001,9 @@ function uc_cim_parse_return($response) {
   return $xml_data;
 }
 
+/**
+ * merchant_auth_xml
+ */
 function merchant_auth_xml() {
   //Get the login info for the mode we're in
   if (variable_get('cim_transaction_mode', 'test') == 'test') {
@@ -1942,6 +2018,9 @@ function merchant_auth_xml() {
   return '<merchantAuthentication><name>'. uc_cim_xml_clean($loginname) .'</name><transactionKey>'. uc_cim_xml_clean($transactionkey) .'</transactionKey></merchantAuthentication>';
 }
 
+/**
+ * uc_cim_in_stock_amount
+ */
 function uc_cim_in_stock_amount($arg1) {
   //Simple fix for now: if "do not process orders with out-of-stock items at checkout" is enabled, return $0
   if (variable_get('cim_not_process_preorders', FALSE)) {
@@ -1990,6 +2069,9 @@ function uc_cim_in_stock_amount($arg1) {
   return $amount; */
 }
 
+/**
+ * uc_cim_create_order_object
+ */
 function uc_cim_create_order_object(&$order, $formvalues, $lookup_cc = FALSE) {
   //Adds the new credit card billing info to an order object
 
@@ -2035,6 +2117,9 @@ function uc_cim_create_order_object(&$order, $formvalues, $lookup_cc = FALSE) {
   $order->payment_details['cc_bank'] = check_plain($formvalues['cc_bank']);
 }
 
+/**
+ * uc_cim_table
+ */
 function uc_cim_table($base_table_name) {
   if (variable_get('cim_transaction_mode', 'test') == 'test') {
     $table = $base_table_name .'_TEST';

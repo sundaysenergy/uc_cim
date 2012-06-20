@@ -100,11 +100,16 @@ function uc_cim_action_expiring_email($account, $payment_profile, $settings) {
   db_query("UPDATE {". uc_cim_table('uc_cim_payment_profiles') ."} SET exp_notification=%d WHERE customer_payment_profile_id=%d AND customer_profile_id=%d", time(), $payment_profile->customer_payment_profile_id, $payment_profile->customer_profile_id);
 }
 
-// Email settings form
+/**
+ * Email settings form
+ */
 function uc_cim_action_expiring_email_form($form_state, $settings = array()) {
   return ca_build_email_form($form_state, $settings, array('global', 'user', 'uc_cim_payment_profile'));
 }
 
+/**
+ * Implementation of hook_ca_predicate().
+ */
 function uc_cim_ca_predicate() {
   $expiring_args = array(
     'user' => 'user',

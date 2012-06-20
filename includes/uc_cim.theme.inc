@@ -5,6 +5,9 @@
  * UC CIM Theme
  */
 
+/**
+ * Theme function for uc_cim_credit_form
+ */
 function theme_uc_cim_credit_form($form) {
   $path = base_path() . drupal_get_path('module', 'uc_credit');
   $output .= '<table class="inline-pane-table" cellpadding="2">';
@@ -47,6 +50,9 @@ function theme_uc_cim_credit_form($form) {
   return $output;
 }
 
+/**
+ * Theme function for uc_cim_edit_card_form
+ */
 function theme_uc_cim_edit_card_form($form) {
   //Prep the credit card portion of the form for themeing and then call the special theme function, then render the form
   $form['credit_card']['cc_policy']['#value'] = '';
@@ -61,6 +67,9 @@ function theme_uc_cim_edit_card_form($form) {
   return $output;
 }
 
+/**
+ * Theme function for uc_cim_refund_form
+ */
 function theme_uc_cim_refund_form($form) {
   $output .= '<p><strong>'. t('Order total:') .'</strong> '. drupal_render($form['order_total'])
            .'<br /><strong>'. t('Payment Received:') .'</strong> '

@@ -71,6 +71,9 @@ function uc_cim_management() {
   return $output;
 }
 
+/**
+ * Delete a profile
+ */
 function uc_cim_delete_profile($profile_id) {
   $response = delete_customer_profile_request($profile_id);
 
@@ -95,7 +98,9 @@ function uc_cim_delete_profile($profile_id) {
   //@todo should we delete from uc_payment_cim as well?
 }
 
-//Charge a credit card
+/**
+ * Charge a credit card
+ */
 function uc_cim_terminal($order_id) {
   $order = uc_order_load($order_id);
   if ($order === FALSE) {
@@ -149,6 +154,9 @@ function uc_cim_terminal($order_id) {
   return $output;
 }
 
+/**
+ * Terminal Form
+ */
 function uc_cim_terminal_form($form_state, $order_id, $amount = 0, $payment_profile_id) {
   $form['amount'] = array(
     '#type' => 'textfield',
@@ -176,6 +184,9 @@ function uc_cim_terminal_form($form_state, $order_id, $amount = 0, $payment_prof
   return $form;
 }
 
+/**
+ * Terminal Form - validate
+ */
 function uc_cim_terminal_form_validate($form, $form_state) {
   $formvalues = $form_state['values'];
   if (!is_numeric($formvalues['amount']) || $formvalues['amount'] <= 0) {
@@ -188,6 +199,9 @@ function uc_cim_terminal_form_validate($form, $form_state) {
   }
 }
 
+/**
+ * Terminal Form - submit
+ */
 function uc_cim_terminal_form_submit($form, $form_state) {
   $formvalues = $form_state['values'];
   $data = array('ppid' => $formvalues['payment_profile_id']);
@@ -195,7 +209,9 @@ function uc_cim_terminal_form_submit($form, $form_state) {
   uc_payment_process('credit', $formvalues['order_id'], $formvalues['amount'], $data, FALSE, 'cim', TRUE);
 }
 
-//Edit card info
+/**
+ * Edit card info - Admin menu callback
+ */
 function uc_admin_edit_card($user_id) {
 
   //Display link back to this customer's orders to
@@ -212,6 +228,11 @@ function uc_admin_edit_card($user_id) {
 
 }
 
+/**
+ * Card edit form - Menu Callback
+ *
+ * @TODO: Might make sense to use hook_help, and have the menu item call the form directly
+ */
 function uc_user_edit_card($payment_profile_id) {
   global $user;
 
@@ -225,6 +246,9 @@ function uc_user_edit_card($payment_profile_id) {
 
 }
 
+/**
+ * Card edit form
+ */
 function uc_cim_edit_card_form($form_state, $user_id, $payment_profile_id = NULL) {
 
   //Get the customers CIM profile id, or create a new one
@@ -329,6 +353,9 @@ function uc_cim_edit_card_form($form_state, $user_id, $payment_profile_id = NULL
   return $form;
 }
 
+/**
+ * Card edit form - validate
+ */
 function uc_cim_edit_card_form_validate($form, &$form_state) {
   $formvalues = $form_state['values'];
   //No validation for deleting...
@@ -346,6 +373,9 @@ function uc_cim_edit_card_form_validate($form, &$form_state) {
   }
 }
 
+/**
+ * Card edit form - submit
+ */
 function uc_cim_edit_card_form_submit(&$form, &$form_state) {
   $formvalues = $form_state['values'];
   //If the user pressed delete, remove the card from Auth.net and database
@@ -381,8 +411,8 @@ function uc_cim_edit_card_form_submit(&$form, &$form_state) {
 }
 
 /**
- * Menu callback
- * user/x/creditcards
+ * Manage cards form
+ * Menu callback: user/x/creditcards
  * Allows user to add new and edit existing credit cards
  */
 function uc_cim_manage_page_form($form_state, $user) {
@@ -403,11 +433,16 @@ function uc_cim_manage_page_form($form_state, $user) {
   return $form;
 }
 
+/**
+ * Manage cards form - submit
+ */
 function uc_cim_manage_page_form_submit(&$form, &$form_state) {
   uc_order_pane_cim('edit-process', $form_state['values']);
 }
 
-//Refund payments
+/**
+ * Refund payments form
+ */
 function uc_cim_refund_form(&$form_state, $order_id, $receipt_id) {
 
   //How much to refund?
@@ -447,6 +482,9 @@ function uc_cim_refund_form(&$form_state, $order_id, $receipt_id) {
 
 }
 
+/**
+ * Refund payments form - validate
+ */
 function uc_cim_refund_form_validate($form, &$form_state) {
   $formvalues = $form_state['values'];
   if (!is_numeric($formvalues['amount']) || $formvalues['amount'] < 0 ) {
@@ -455,6 +493,9 @@ function uc_cim_refund_form_validate($form, &$form_state) {
   return TRUE;
 }
 
+/**
+ * Refund payments form - submit
+ */
 function uc_cim_refund_form_submit($form, &$form_state) {
   $formvalues = $form_state['values'];
   global $user; //For payment comment, NOT refund submission
