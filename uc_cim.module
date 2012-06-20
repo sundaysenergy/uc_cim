@@ -823,9 +823,20 @@ function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-c
     if ($profile_id) $profiles = uc_cim_get_payment_profiles($profile_id);
     if ($profiles) {
       foreach ($profiles as $profile) {
-        //The edit card info link depends on where we are
-        if (arg(0) == 'admin') $edit_link = l($edit_card, 'admin/store/orders/'. $order->uid .'/cim-edit/'. $profile['customer_payment_profile_id'], array('query' => 'dest='. $_GET['q'], 'html' => TRUE));
-        else $edit_link = l($edit_card, 'user/billing/'. $profile['customer_payment_profile_id'], array('query' => 'dest='. $_GET['q'], 'html' => TRUE));
+
+        // The edit card info link depends on where we are.
+        // In the admin interface, it should go to admin/store/orders/[order_id]/cim-edit/[customer_payment_profile_id]?destination=[current path]
+        if (arg(0) == 'admin') {
+          $edit_link = l($edit_card, 'admin/store/orders/' . $order->uid . '/cim-edit/' . $profile['customer_payment_profile_id'], array('query' => 'destination=' . $_GET['q'], 'html' => TRUE));
+        }
+        // In checkout, it should go to user/billing/[customer_payment_profile_id]?destination=cart/checkout
+        elseif (arg(0) == 'cart' && arg(1) == 'checkout') {
+          $edit_link = l($edit_card, 'user/billing/' . $profile['customer_payment_profile_id'], array('query' => 'destination=cart/checkout', 'html' => TRUE));
+        }
+        // Everywhere else, it should go to user/billing/[customer_payment_profile_id]?destination=[current path]
+        else {
+          $edit_link = l($edit_card, 'user/billing/' . $profile['customer_payment_profile_id'], array('query' => 'destination=' . $_GET['q'], 'html' => TRUE));
+        }
 
         //Shorten American Express to Amex to save space
         if ($profile['cc_type'] == 'American Express') $profile['cc_type'] = 'Amex';
