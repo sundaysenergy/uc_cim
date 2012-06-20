@@ -20,10 +20,6 @@
 // Conditional Actions
 require_once 'includes/uc_cim.ca.inc';
 
-// CIM Functions
-// @TODO: It'd be nice to include this more selectively
-require_once 'includes/uc_cim.cim.inc';
-
 /* ******************************************************************************
  * Drupal Hooks
  * *****************************************************************************/
@@ -1516,6 +1512,9 @@ function uc_cim_switch_payment_profile_form_submit(&$form, &$form_state) {
  * is changed.
  */
 function uc_cim_update_order_billing_address( &$order ) {
+  // Include CIM functions
+  module_load_include('inc','uc_cim', 'includes/uc_cim.cim');
+
   $response = get_customer_payment_profile_request(uc_cim_get_profile_id($order->uid), $order->cim_ppid);
   if ($response->messages->message->code == 'I00001') {
     $order->billing_first_name = (string)$response->paymentProfile->billTo->firstName;

@@ -24,6 +24,9 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
     return array('success' => FALSE, 'gateway_message' => $gateway_message);
   }
 
+  // Include CIM functions
+  module_load_include('inc','uc_cim', 'includes/uc_cim.cim');
+
   // Load the order data for this transaction
   if (is_object($order_id)) $order = $order_id; //Support for passing an order object instead of just an ID - used for API calls
   else $order = uc_order_load($order_id);

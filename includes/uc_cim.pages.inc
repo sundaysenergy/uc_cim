@@ -5,6 +5,9 @@
  * UC CIM Pages
  */
 
+// Include CIM functions
+module_load_include('inc','uc_cim', 'includes/uc_cim.cim');
+
 /**
  * @todo This function should utilize callback arguments from the D6 menu system instead of checking arg()
  */
