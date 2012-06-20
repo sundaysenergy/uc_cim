@@ -93,7 +93,14 @@ function uc_cim_action_expiring_email($account, $payment_profile, $settings) {
     $sent = drupal_mail('uc_order', 'action-mail', $email, $language, $settings, $settings['from']);
 
     if (!$sent['result']) {
-      watchdog('ca', 'Attempt to e-mail @email concerning credit card @ppid failed.', array('@email' => $email, '@ppid' => $payment_profile->customer_payment_profile_id), WATCHDOG_ERROR);
+      watchdog('ca',
+        'Attempt to e-mail @email concerning credit card @ppid failed.',
+        array(
+          '@email' => $email,
+          '@ppid' => $payment_profile->customer_payment_profile_id
+        ),
+        WATCHDOG_ERROR
+      );
     }
   }
 

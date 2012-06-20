@@ -178,7 +178,16 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
         'message' => t('Unable to store payment info on secure server.  For your safety, this transaction cannot be completed at this time.  Please try again soon.  This error has been logged and will be investigated.'),
         'gateway_message' => $gateway_message,
       );
-      watchdog('uc_cim', t('Unable to create customer profile during checkout.  Order: !order_id  User: !user_id  Code: !code  Text: !text'), array('!order_id' => $order->order_id, '!user_id' => $order->uid, '!code' => (string)$response->messages->message->code, '!text' => (string)$response->messages->message->text), WATCHDOG_ERROR);
+      watchdog('uc_cim',
+        'Unable to create customer profile during checkout.  Order: !order_id  User: !user_id  Code: !code  Text: !text',
+        array(
+          '!order_id' => $order->order_id,
+          '!user_id' => $order->uid,
+          '!code' => (string)$response->messages->message->code,
+          '!text' => (string)$response->messages->message->text,
+        ),
+        WATCHDOG_ERROR
+      );
       return $result;
     }
   }
@@ -225,7 +234,15 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
       //   it is cast to an integer, but authorization code will be lost.
       $delimiter = (variable_get('cim_delimiter', ',') == ',') ? '|' : ',';
       $directResponse = explode($delimiter, $response->directResponse);
-      watchdog('uc_cim', 'Incorrect delimiter "'. variable_get('cim_delimiter', ',') .'" set for response: '. $response->directResponse .'. Raw CIM response: '. $response->messages->message->text, array(), WATCHDOG_WARNING);
+      watchdog('uc_cim',
+        'Incorrect delimiter !delimiter set for response: !response. Raw CIM response: !message',
+        array(
+          '!delimiter' => variable_get('cim_delimiter', ','),
+          '!response' => $response->directResponse,
+          '!message' => $response->messages->message->text,
+        ),
+        WATCHDOG_WARNING
+      );
     }
     $bank_message = $directResponse[3];
   }
@@ -241,7 +258,15 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
       //   it is cast to an integer, but authorization code will be lost.
       $delimiter = (variable_get('cim_delimiter', ',') == ',') ? '|' : ',';
       $directResponse = explode($delimiter, $response->validationDirectResponse);
-      watchdog('uc_cim', 'Incorrect delimiter "'. variable_get('cim_delimiter', ',') .'" set for response: '. $response->directResponse .'. Raw CIM response: '. $response->messages->message->text, array(), WATCHDOG_WARNING);
+      watchdog('uc_cim',
+        'Incorrect delimiter !delimiter set for response: !response. Raw CIM response: !message',
+        array(
+          '!delimiter' => variable_get('cim_delimiter', ','),
+          '!response' => $response->directResponse,
+          '!message' => $response->messages->message->text,
+        ),
+        WATCHDOG_WARNING
+      );
     }
     $bank_message = $directResponse[3];
   }
@@ -267,7 +292,14 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
       'gateway_message' => $gateway_message,
       'bank_message' => $bank_message,
     );
-    watchdog('uc_cim', 'CIM Charge failure. Raw gateway response: '. $response->directResponse .'. Raw CIM response: '. $response->messages->message->text, array(), WATCHDOG_NOTICE);
+    watchdog('uc_cim',
+      'CIM Charge failure. Raw gateway response: !response. Raw CIM response: !message',
+      array(
+        '!response' => $response->directResponse,
+        '!message' => $response->messages->message->text,
+      ),
+      WATCHDOG_NOTICE
+    );
   }
   else {
     if ($amount > 0) {

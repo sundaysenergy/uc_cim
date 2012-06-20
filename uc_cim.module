@@ -1034,7 +1034,15 @@ function uc_recurring_uc_cim_renew($order, $fee) {
     module_invoke_all('gateway_renew_response', 'uc_cim', $order, $result['gateway_message'], $result['bank_message']);
   }
   else {
-    watchdog('uc_cim', 'Order !order does not have a valid payment profile (!ppid) associated with it.', array('!ppid' => $order->cim_ppid, '!order' => $order->order_id), WATCHDOG_ERROR, l(t('Order #!order', array('!order' => $order->order_id)), 'admin/store/orders/'. $order->order_id));
+    watchdog('uc_cim',
+      'Order !order does not have a valid payment profile (!ppid) associated with it.',
+      array(
+        '!ppid' => $order->cim_ppid,
+        '!order' => $order->order_id,
+      ),
+      WATCHDOG_ERROR,
+      l(t('Order #!order', array('!order' => $order->order_id)), 'admin/store/orders/'. $order->order_id)
+    );
 
     uc_order_comment_save($order->order_id, 0, t('Order does not have a valid payment profile (!ppid) for customer !profile_id associated with it.', array('!ppid' => $order->cim_ppid, '!profile_id' => l((int)$profile_id, 'admin/store/customers/cim/'. (int)$profile_id))));
 
@@ -1407,7 +1415,14 @@ function delete_customer_payment_profile_request($profile_id, $payment_profile_i
   //Process the response
   if ($response->messages->message->code != 'I00001') {
     drupal_set_message(t('There was an error processing your request. Pleast contact customer support for assistance'), 'error');
-    watchdog('uc_cim', 'CIM payment profile delete error for profile id '. $profile_id .': '. $response->messages->message->text, array(), WATCHDOG_ERROR);
+    watchdog('uc_cim',
+      'CIM payment profile delete error for profile id !profile_id: !message',
+      array(
+        '!profile_id' => $profile_id,
+        '!message' => $response->messages->message->text,
+      ),
+      WATCHDOG_ERROR
+    );
   }
   else {
     uc_cim_delete_payment_profile($profile_id, $payment_profile_id);
@@ -1585,7 +1600,7 @@ function uc_cim_save_profile_id($user_id, $profile_id) {
   $sql = "INSERT INTO {". $table ."} (uid, customer_profile_id) VALUES (%d, %d)";
   db_query($sql, $user_id, $profile_id);
   if (db_affected_rows() == 0) {
-    watchdog('uc_cim', 'Could not save customer profile id to database for user '. $user_id, array(), WATCHDOG_ERROR);
+    watchdog('uc_cim', 'Could not save customer profile id to database for user !user_id', array('!user_id' => $user_id), WATCHDOG_ERROR);
   }
 }
 
@@ -1928,7 +1943,15 @@ function uc_cim_switch_payment_profile_form_submit(&$form, &$form_state) {
   }
   else {
     drupal_set_message(t('Error assigning new payment profile.  The selected payment profile could not be matched to the customer profile.  This error has been logged.'));
-    watchdog('uc_cim', t('Error assigning new payment profile to order !order_id.  The selected payment profile !profile_id could not be matched to the customer profile !customer_id.'), array('!order_id' => $order->order_id, '!profile_id' => $ppid, '!customer_id' => $order->uid), WATCHDOG_ERROR);
+    watchdog('uc_cim',
+      'Error assigning new payment profile to order !order_id. The selected payment profile !profile_id could not be matched to the customer profile !customer_id.',
+      array(
+        '!order_id' => $order->order_id,
+        '!profile_id' => $ppid,
+        '!customer_id' => $order->uid,
+      ),
+      WATCHDOG_ERROR
+    );
   }
 }
 

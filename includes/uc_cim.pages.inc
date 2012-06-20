@@ -401,7 +401,14 @@ function uc_cim_edit_card_form_submit(&$form, &$form_state) {
   //Process the response
   if ($response->messages->message->code != 'I00001') {
     drupal_set_message(t('There was an error processing your request. Pleast contact customer support for assistance'), 'error');
-    watchdog('uc_cim', 'Error edit credit card information for profile id '. $formvalues['profile_id'] .': '. $response->messages->message->text, array(), WATCHDOG_ERROR);
+    watchdog('uc_cim',
+      'Error edit credit card information for profile id !profile_id: !message',
+      array(
+        '!profile_id' => $formvalues['profile_id'],
+        '!message' => $response->messages->message->text,
+      ),
+      WATCHDOG_ERROR
+    );
   }
   else {
     drupal_set_message('Billing information successfully updated.');
