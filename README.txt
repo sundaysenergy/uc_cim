@@ -123,7 +123,7 @@ the uc_cim.module for a detailed example. The basic process is:
 select this on a form, for instance). This code just uses the first returned payment
 profile:
 
-	$data = array('ppid' => $payment_profiles[0]['payment_profile_id']);
+	$data = array('ppid' => $payment_profiles[0]['customer_payment_profile_id']);
   $data = serialize($data);
   uc_payment_process('credit', $order_id, $amount, $data, FALSE, 'cim', TRUE);
 
