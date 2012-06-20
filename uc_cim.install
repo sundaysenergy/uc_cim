@@ -129,7 +129,8 @@ function uc_cim_update_6203(&$sandbox = NULL) {
   db_drop_index($ret, 'uc_payment_cim', 'order_id');
   db_change_field($ret, 'uc_payment_cim', 'order_id', 'order_id',
     array('type' => 'int', 'not null' => TRUE),
-    array('primary key' => array('order_id')));
+    array('primary key' => array('order_id'))
+  );
   db_add_index($ret, 'uc_payment_cim', 'cim_ppid', array('cim_ppid'));
   return $ret;
 }
@@ -139,7 +140,7 @@ function uc_cim_update_6203(&$sandbox = NULL) {
 */
 function uc_cim_update_6204() {
   $ret = array();
-  db_query("ALTER TABLE {uc_cim} CHANGE `uid` `uid` int(10) unsigned NOT NULL");
-  db_query("ALTER TABLE {uc_cim_TEST} CHANGE `uid` `uid` int(10) unsigned NOT NULL");
+  db_change_field($ret, 'uc_cim', 'uid', 'uid', array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE));
+  db_change_field($ret, 'uc_cim_TEST', 'uid', 'uid', array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE));
   return $ret;
 }
