@@ -443,3 +443,28 @@ function merchant_auth_xml() {
 
   return '<merchantAuthentication><name>'. uc_cim_xml_clean($loginname) .'</name><transactionKey>'. uc_cim_xml_clean($transactionkey) .'</transactionKey></merchantAuthentication>';
 }
+
+/**
+ * Sanitize data being passed as XML values.
+ */
+function uc_cim_xml_clean($string) {
+  return uc_cim_numeric_entities(htmlentities( $string, ENT_QUOTES, 'UTF-8' ));
+}
+
+/**
+ * Many named entities from HTML are not valid in XML, and many word-sized
+ * characters do not have named entities, so convert to numeric entities.
+ */
+function uc_cim_numeric_entities($string) {
+  static $mapping;
+  if (!$mapping) {
+    $mapping = array();
+    foreach (get_html_translation_table(HTML_ENTITIES, ENT_QUOTES) as $char => $entity) {
+      $mapping[$entity] = '&#'. ord($char) .';';
+    }
+  }
+  $string = str_replace(array_keys($mapping), $mapping, $string);
+  // multibyte characters > 0xFF may not work
+  //$string = mb_encode_numericentity ($string, array (0x0100, 0xffff, 0x0100, 0xffff), 'UTF-8');
+  return $string;
+}
