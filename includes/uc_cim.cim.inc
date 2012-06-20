@@ -366,3 +366,63 @@ function validate_customer_payment_profile_request($profile_id, $payment_profile
   return $response;
 
 }
+
+/**
+ * uc_cim_curl_send
+ */
+function uc_cim_curl_send($content) {
+  //Build the path to post to, depending on whether we're in test mode or not
+  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+    $posturl = 'https://apitest.authorize.net/xml/v1/request.api';
+  }
+  else {
+    $posturl = 'https://api.authorize.net/xml/v1/request.api';
+  }
+
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, $posturl);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, Array("Content-Type: text/xml"));
+  curl_setopt($ch, CURLOPT_HEADER, 0);  //Set to TRUE to return the header in the output - good for debugging, but messes with xml parsing
+  curl_setopt($ch, CURLOPT_POSTFIELDS, $content);
+  curl_setopt($ch, CURLOPT_POST, 1);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+
+  $authorize = curl_exec($ch);
+  if ($error = curl_error($ch)) {
+    watchdog('uc_cim', $error, array(), WATCHDOG_ERROR);
+    uc_cim_notify_error('Connection error (cURL)', $error);
+  }
+  else {
+    $response = uc_cim_parse_return($authorize);
+  }
+
+  if (variable_get('cim_logging_level', 'standard') == 'extended') {
+    // log request and response as raw xml
+    $sent_xml = preg_replace('|\<cardNumber\>(.*)\<\/cardNumber\>|', '<cardNumber>[Not logged]</cardNumber>', $content);
+    $sent_xml = preg_replace('|\<cardCode\>(.*)\<\/cardCode\>|', '<cardCode>[Not logged]</cardCode>', $sent_xml);
+    $message = "Request Sent: <br />\n". uc_cim_xml_clean( $sent_xml ) ."\n<br />";
+    $message .= "<br />\nResponse Received: <br />\n". uc_cim_xml_clean( $authorize ) ."\n";
+    watchdog('CIM-ext', $message, array(), WATCHDOG_NOTICE);
+  }
+
+  curl_close($ch);
+  return $response;
+}
+
+/**
+ * uc_cim_parse_return
+ */
+function uc_cim_parse_return($response) {
+  $xml_raw = str_replace('xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd"', '', $response);
+  try {
+    $xml_data = new SimpleXMLElement($xml_raw);
+  }
+  catch (Exception $e) {
+    watchdog('uc_cim', $e->getMessage(), array(), WATCHDOG_ERROR);
+    uc_cim_notify_error('Connection error (SimpleXML)', $e->getMessage());
+    $xml_data = NULL;
+  }
+  return $xml_data;
+}
