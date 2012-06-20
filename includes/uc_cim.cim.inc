@@ -426,3 +426,20 @@ function uc_cim_parse_return($response) {
   }
   return $xml_data;
 }
+
+/**
+ * merchant_auth_xml
+ */
+function merchant_auth_xml() {
+  //Get the login info for the mode we're in
+  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+    $loginname = variable_get('cim_login_id_TEST', '');
+    $transactionkey = variable_get('cim_transaction_key_TEST', '');
+  }
+  else {
+    $loginname = variable_get('cim_login_id', '');
+    $transactionkey = variable_get('cim_transaction_key', '');
+  }
+
+  return '<merchantAuthentication><name>'. uc_cim_xml_clean($loginname) .'</name><transactionKey>'. uc_cim_xml_clean($transactionkey) .'</transactionKey></merchantAuthentication>';
+}
