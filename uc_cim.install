@@ -63,10 +63,12 @@ function uc_cim_schema() {
 
   $schema['uc_payment_cim'] = array(
     'fields' => array(
-      'order_id' => array('type' => 'int', 'size' => 'medium', 'not null' => TRUE, 'disp-width' => '9'),
+      'order_id' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11'),
       'cim_ppid' => array('type' => 'int', 'not null' => TRUE, 'disp-width' => '11')),
+    'primary key' => array('order_id'),
     'indexes' => array(
-      'order_id' => array('order_id')),
+      'cim_ppid' => array('cim_ppid'),
+    ),
   );
   return $schema;
 }
@@ -118,3 +120,15 @@ function uc_cim_update_6202(&$sandbox = NULL) {
   db_add_field($ret, 'uc_cim_payment_profiles_TEST', 'exp_notification', array('type' => 'int', 'disp-width' => '11'));
   return $ret;
 }
+
+/**
+ * Update schema to handle order_id integers correctly, and fix indices
+ */
+function uc_cim_update_6203(&$sandbox = NULL) {
+  $ret = array();
+  db_drop_index($ret, 'uc_payment_cim', 'order_id');
+  db_change_field($ret, 'uc_payment_cim', 'order_id', 'order_id',
+    array('type' => 'int', 'not null' => TRUE),
+    array('primary key' => array('order_id')));
+  db_add_index($ret, 'uc_payment_cim', 'cim_ppid', array('cim_ppid'));
+  return $ret;
