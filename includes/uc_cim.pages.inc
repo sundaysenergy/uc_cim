@@ -33,16 +33,7 @@ function uc_cim_management() {
     //Get profile details
     $profile_id = arg(4);
 
-    //Build XML to post
-    $content =
-    '<?xml version="1.0" encoding="utf-8"?>'.
-    '<getCustomerProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
-    merchant_auth_xml() .
-      '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
-    '</getCustomerProfileRequest>';
-
-    //Send the XML via curl
-    $response = uc_cim_curl_send($content);
+    $response = get_customer_profile_request($profile_id);
 
     $output .= '<p>CIM Data Request Status: '. $response->messages->message->code .' ('. $response->messages->message->text .')</p>';
     $output .= '<p>'. l('return to profile list', 'admin/store/customers/cim') .'</p>';
