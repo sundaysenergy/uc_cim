@@ -8,7 +8,31 @@
  * Implementation of hook_install().
  */
 function uc_cim_install() {
+
+  // Install the schema.
   drupal_install_schema('uc_cim');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function uc_cim_uninstall() {
+
+  // Uninstall the schema.
+  drupal_uninstall_schema('uc_cim');
+
+  // Delete variables.
+  variable_del('cim_login_id');
+  variable_del('cim_transaction_key');
+  variable_del('cim_delimiter');
+  variable_del('cim_not_process_preorders');
+  variable_del('cim_transaction_mode');
+  variable_del('cim_logging_level');
+  variable_del('uc_cim_send_error_notifications');
+  variable_del('uc_cim_error_notifications_to');
+  variable_del('uc_cim_hourly_threshold');
+  variable_del('cim_login_id_TEST');
+  variable_del('cim_transaction_key_TEST');
 }
 
 /**
@@ -71,13 +95,6 @@ function uc_cim_schema() {
     ),
   );
   return $schema;
-}
-
-/**
- * Implementation of hook_uninstall().
- */
-function uc_cim_uninstall() {
-  drupal_uninstall_schema('uc_cim');
 }
 
 /*
