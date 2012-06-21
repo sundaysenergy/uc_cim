@@ -48,7 +48,7 @@ function create_customer_profile_request($user_id) {
 function create_customer_payment_profile_request($profile_id, $order) {
 
   //Validate this payment profile in live mode for production sites.  This performs stronger card validation, but fails for test transactions.
-  if (variable_get('cim_transaction_mode', 'test') == 'production') {
+  if (variable_get('uc_cim_transaction_mode', 'test') == 'production') {
     $validation_mode = '<validationMode>liveMode</validationMode>';
   }
   else {
@@ -198,7 +198,7 @@ function create_customer_profile_transaction_request($profile_id, $payment_profi
       }
     }
   }
-  $description = str_replace(variable_get('cim_delimiter', ','), '', $description);  //Since this is returned in the response, delimitters will cause problems
+  $description = str_replace(variable_get('uc_cim_delimiter', ','), '', $description);  //Since this is returned in the response, delimitters will cause problems
   $description = substr($description, 0, 255);
 
   //Determine whether to add CVV field
@@ -343,7 +343,7 @@ function get_customer_payment_profile_request($profile_id, $payment_profile_id) 
 function validate_customer_payment_profile_request($profile_id, $payment_profile_id) {
 
   //Validate this payment profile in live mode for production sites.  This performs stronger card validation, but fails for test transactions.
-  if (variable_get('cim_transaction_mode', 'test') == 'production') {
+  if (variable_get('uc_cim_transaction_mode', 'test') == 'production') {
     $validation_mode = '<validationMode>liveMode</validationMode>';
   }
   else {
@@ -372,7 +372,7 @@ function validate_customer_payment_profile_request($profile_id, $payment_profile
  */
 function uc_cim_curl_send($content) {
   //Build the path to post to, depending on whether we're in test mode or not
-  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+  if (variable_get('uc_cim_transaction_mode', 'test') == 'test') {
     $posturl = 'https://apitest.authorize.net/xml/v1/request.api';
   }
   else {
@@ -398,7 +398,7 @@ function uc_cim_curl_send($content) {
     $response = uc_cim_parse_return($authorize);
   }
 
-  if (variable_get('cim_logging_level', 'standard') == 'extended') {
+  if (variable_get('uc_cim_logging_level', 'standard') == 'extended') {
     // log request and response as raw xml
     $sent_xml = preg_replace('|\<cardNumber\>(.*)\<\/cardNumber\>|', '<cardNumber>[Not logged]</cardNumber>', $content);
     $sent_xml = preg_replace('|\<cardCode\>(.*)\<\/cardCode\>|', '<cardCode>[Not logged]</cardCode>', $sent_xml);
@@ -456,13 +456,13 @@ function uc_cim_notify_error($error_type, $error_message) {
  */
 function merchant_auth_xml() {
   //Get the login info for the mode we're in
-  if (variable_get('cim_transaction_mode', 'test') == 'test') {
-    $loginname = variable_get('cim_login_id_TEST', '');
-    $transactionkey = variable_get('cim_transaction_key_TEST', '');
+  if (variable_get('uc_cim_transaction_mode', 'test') == 'test') {
+    $loginname = variable_get('uc_cim_login_id_TEST', '');
+    $transactionkey = variable_get('uc_cim_transaction_key_TEST', '');
   }
   else {
-    $loginname = variable_get('cim_login_id', '');
-    $transactionkey = variable_get('cim_transaction_key', '');
+    $loginname = variable_get('uc_cim_login_id', '');
+    $transactionkey = variable_get('uc_cim_transaction_key', '');
   }
 
   return '<merchantAuthentication><name>'. uc_cim_xml_clean($loginname) .'</name><transactionKey>'. uc_cim_xml_clean($transactionkey) .'</transactionKey></merchantAuthentication>';

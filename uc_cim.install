@@ -22,17 +22,17 @@ function uc_cim_uninstall() {
   drupal_uninstall_schema('uc_cim');
 
   // Delete variables.
-  variable_del('cim_login_id');
-  variable_del('cim_transaction_key');
-  variable_del('cim_delimiter');
-  variable_del('cim_not_process_preorders');
-  variable_del('cim_transaction_mode');
-  variable_del('cim_logging_level');
+  variable_del('uc_cim_login_id');
+  variable_del('uc_cim_transaction_key');
+  variable_del('uc_cim_delimiter');
+  variable_del('uc_cim_not_process_preorders');
+  variable_del('uc_cim_transaction_mode');
+  variable_del('uc_cim_logging_level');
   variable_del('uc_cim_send_error_notifications');
   variable_del('uc_cim_error_notifications_to');
   variable_del('uc_cim_hourly_threshold');
-  variable_del('cim_login_id_TEST');
-  variable_del('cim_transaction_key_TEST');
+  variable_del('uc_cim_login_id_TEST');
+  variable_del('uc_cim_transaction_key_TEST');
 }
 
 /**
@@ -159,5 +159,37 @@ function uc_cim_update_6204() {
   $ret = array();
   db_change_field($ret, 'uc_cim', 'uid', 'uid', array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE));
   db_change_field($ret, 'uc_cim_TEST', 'uid', 'uid', array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE));
+  return $ret;
+}
+
+/**
+ * Change the names of the module's variables so they are properly namespaced.
+ * The following variables were already namespaced correctly, so those are left alone:
+ * uc_cim_send_error_notifications
+ * uc_cim_error_notifications_to
+ * uc_cim_hourly_threshold
+ */
+function uc_cim_update_6205() {
+  $ret = array();
+
+  // Copy the old values to the new variables.
+  variable_set('uc_cim_login_id', variable_get('cim_login_id', ''));
+  variable_set('uc_cim_transaction_key', variable_get('cim_transaction_key', ''));
+  variable_set('uc_cim_delimiter', variable_get('cim_delimiter', ','));
+  variable_set('uc_cim_not_process_preorders', variable_get('cim_not_process_preorders', FALSE));
+  variable_set('uc_cim_transaction_mode', variable_get('cim_transaction_mode', 'test'));
+  variable_set('uc_cim_logging_level', variable_get('cim_logging_level', 'standard'));
+  variable_set('uc_cim_login_id_TEST', variable_get('cim_login_id_TEST', ''));
+  variable_set('uc_cim_transaction_key_TEST', variable_get('cim_transaction_key_TEST', ''));
+
+  // Delete the old variables.
+  variable_del('cim_login_id');
+  variable_del('cim_transaction_key');
+  variable_del('cim_delimiter');
+  variable_del('cim_not_process_preorders');
+  variable_del('cim_transaction_mode');
+  variable_del('cim_logging_level');
+  variable_del('cim_login_id_TEST');
+  variable_del('cim_transaction_key_TEST');
   return $ret;
 }

@@ -415,26 +415,26 @@ function uc_cim_settings_form() {
   $form['cim_settings']['cim_login_id'] = array(
     '#type' => 'textfield',
     '#title' => t('Login ID'),
-    '#default_value' => variable_get('cim_login_id', ''),
+    '#default_value' => variable_get('uc_cim_login_id', ''),
     '#description' => t('The login username used for the Authorize.net service.'),
   );
   $form['cim_settings']['cim_transaction_key'] = array(
     '#type' => 'textfield',
     '#title' => t('Transaction key'),
-    '#default_value' => variable_get('cim_transaction_key', ''),
+    '#default_value' => variable_get('uc_cim_transaction_key', ''),
     '#description' => t('Your API transaction key for sending encrypted data.'),
   );
   $form['cim_settings']['cim_delimiter'] = array(
     '#type' => 'textfield',
     '#title' => t('Authorize.net response delimitting character'),
-    '#default_value' => variable_get('cim_delimiter', ','),
+    '#default_value' => variable_get('uc_cim_delimiter', ','),
     '#description' => t('Authorize.net provides success/error responses in a charcter-delimited format. Usually this is a comma (,). Sometimes its a pipe (|). If your transaction is failing but you are not getting any useful error messages in your log, this may be the reason. Check your Authorize.net Direct Response Delimiter selection.'),
   );
   $form['cim_settings']['cim_not_process_preorders'] = array(
     '#type' => 'checkbox',
     '#title' => t('Do NOT process out-of-stock items?'),
     '#description' => t('If this is checked, the customer will not be charged for out-of-stock items at checkout. Their card will be verified, but you will have to process the charges later.'),
-    '#default_value' => variable_get('cim_not_process_preorders', FALSE),
+    '#default_value' => variable_get('uc_cim_not_process_preorders', FALSE),
   );
   $form['cim_settings']['cim_transaction_mode'] = array(
     '#type' => 'select',
@@ -445,7 +445,7 @@ function uc_cim_settings_form() {
       'test_mode' => t('Test Mode'),
       'test' => t('Developer Test Mode'),
     ),
-    '#default_value' => variable_get('cim_transaction_mode', 'test'),
+    '#default_value' => variable_get('uc_cim_transaction_mode', 'test'),
   );
 
   // Enable extended logging holding both XML sent and response received
@@ -457,7 +457,7 @@ function uc_cim_settings_form() {
       'standard' => t('Standard'),
       'extended' => t('Extended'),
     ),
-    '#default_value' => variable_get('cim_logging_level', 'standard'),
+    '#default_value' => variable_get('uc_cim_logging_level', 'standard'),
   );
 
   // Enable critical error notifications
@@ -497,13 +497,13 @@ function uc_cim_settings_form() {
   $form['cim_settings']['test_mode_settings']['cim_login_id_TEST'] = array(
     '#type' => 'textfield',
     '#title' => t('Login ID'),
-    '#default_value' => variable_get('cim_login_id_TEST', ''),
+    '#default_value' => variable_get('uc_cim_login_id_TEST', ''),
     '#description' => t('The login username used for the Authorize.net DEVELOPER TEST ACCOUNT.'),
   );
   $form['cim_settings']['test_mode_settings']['cim_transaction_key_TEST'] = array(
     '#type' => 'textfield',
     '#title' => t('Transaction key'),
-    '#default_value' => variable_get('cim_transaction_key_TEST', ''),
+    '#default_value' => variable_get('uc_cim_transaction_key_TEST', ''),
     '#description' => t('Your API transaction key for sending encrypted data to your Authorize.net DEVELOPER TEST ACCOUNT.'),
   );
   return $form;
@@ -748,7 +748,7 @@ function uc_cim_refund($order_id, $transaction_id, $last_four, $amount, $type = 
   global $user; //For order comment saving, NOT processing (use order->uid for that)
 
   //Are we in test mode?
-  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+  if (variable_get('uc_cim_transaction_mode', 'test') == 'test') {
     $test = '_TEST';
     $submit_data['x_test_request'] = 'TRUE';
     $url = 'https://test.authorize.net/gateway/transact.dll';
@@ -764,8 +764,8 @@ function uc_cim_refund($order_id, $transaction_id, $last_four, $amount, $type = 
     'x_version' => '3.1',
     'x_delim_data' => 'TRUE',
     'x_relay_response' => 'FALSE',
-    'x_login' => variable_get('cim_login_id'. $test, ''),
-    'x_tran_key' => variable_get('cim_transaction_key'. $test, ''),
+    'x_login' => variable_get('uc_cim_login_id'. $test, ''),
+    'x_tran_key' => variable_get('uc_cim_transaction_key'. $test, ''),
     'x_amount' => uc_currency_format($amount, FALSE, FALSE, '.'),
     'x_card_num' => $last_four,
     //'x_exp_date' => $order->payment_details['cc_exp_month'] .'/'. $order->payment_details['cc_exp_year'],
@@ -793,7 +793,7 @@ function uc_cim_refund($order_id, $transaction_id, $last_four, $amount, $type = 
   curl_close($ch);
 
   //Process the response
-  $response = explode(variable_get('cim_delimiter', ','), $authorize);
+  $response = explode(variable_get('uc_cim_delimiter', ','), $authorize);
   $response_code = $response[0];
   $response_text = $response[3];
   $approval_code = $response[4];
@@ -919,7 +919,7 @@ function uc_cim_delete_payment_profile($profile_id, $payment_profile_id) {
  */
 function uc_cim_in_stock_amount($arg1) {
   //Simple fix for now: if "do not process orders with out-of-stock items at checkout" is enabled, return $0
-  if (variable_get('cim_not_process_preorders', FALSE)) {
+  if (variable_get('uc_cim_not_process_preorders', FALSE)) {
     if ($arg1->products) {
       foreach ($arg1->products as $key => $product) {
 
@@ -1017,7 +1017,7 @@ function uc_cim_create_order_object(&$order, $formvalues, $lookup_cc = FALSE) {
  * uc_cim_table
  */
 function uc_cim_table($base_table_name) {
-  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+  if (variable_get('uc_cim_transaction_mode', 'test') == 'test') {
     $table = $base_table_name .'_TEST';
   }
   else {

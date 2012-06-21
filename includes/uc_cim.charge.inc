@@ -207,7 +207,7 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
   if ($profile_id && $payment_profile_id != 0 && $amount > 0) {
 
     // If we're in test mode (not developer test mode or production) just validate the card.  The best we can do...
-    if (variable_get('cim_transaction_mode', 'test') == 'test_mode') $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
+    if (variable_get('uc_cim_transaction_mode', 'test') == 'test_mode') $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
     else $response = create_customer_profile_transaction_request($profile_id, $payment_profile_id, $order, $amount);
 
   }
@@ -329,7 +329,7 @@ function _uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_tabl
  * _uc_cim_get_bank_message
  */
 function _uc_cim_get_bank_message($response, $key = 'directResponse') {
-  $delimiter = variable_get('cim_delimiter', ',');
+  $delimiter = variable_get('uc_cim_delimiter', ',');
 
   $directResponse = explode($delimiter, $response->$key);
 
