@@ -412,31 +412,31 @@ function uc_cim_settings_form() {
     '#title' => t('CIM settings'),
   );
   // Primary settings
-  $form['cim_settings']['cim_login_id'] = array(
+  $form['cim_settings']['uc_cim_login_id'] = array(
     '#type' => 'textfield',
     '#title' => t('Login ID'),
     '#default_value' => variable_get('uc_cim_login_id', ''),
     '#description' => t('The login username used for the Authorize.net service.'),
   );
-  $form['cim_settings']['cim_transaction_key'] = array(
+  $form['cim_settings']['uc_cim_transaction_key'] = array(
     '#type' => 'textfield',
     '#title' => t('Transaction key'),
     '#default_value' => variable_get('uc_cim_transaction_key', ''),
     '#description' => t('Your API transaction key for sending encrypted data.'),
   );
-  $form['cim_settings']['cim_delimiter'] = array(
+  $form['cim_settings']['uc_cim_delimiter'] = array(
     '#type' => 'textfield',
     '#title' => t('Authorize.net response delimitting character'),
     '#default_value' => variable_get('uc_cim_delimiter', ','),
     '#description' => t('Authorize.net provides success/error responses in a charcter-delimited format. Usually this is a comma (,). Sometimes its a pipe (|). If your transaction is failing but you are not getting any useful error messages in your log, this may be the reason. Check your Authorize.net Direct Response Delimiter selection.'),
   );
-  $form['cim_settings']['cim_not_process_preorders'] = array(
+  $form['cim_settings']['uc_cim_not_process_preorders'] = array(
     '#type' => 'checkbox',
     '#title' => t('Do NOT process out-of-stock items?'),
     '#description' => t('If this is checked, the customer will not be charged for out-of-stock items at checkout. Their card will be verified, but you will have to process the charges later.'),
     '#default_value' => variable_get('uc_cim_not_process_preorders', FALSE),
   );
-  $form['cim_settings']['cim_transaction_mode'] = array(
+  $form['cim_settings']['uc_cim_transaction_mode'] = array(
     '#type' => 'select',
     '#title' => t('Transaction mode'),
     '#description' => t('"Production" and "Test Mode" will submit transactions using the login id and transaction key entered above.  "Production" sumbits real transactions.  "Test Mode" only validates credit cards, it does not process them.  This makes "Test mode" somewhat useful for testing your setup.  "Developer Test" submits transactions to the URL for a developers test account, using the login information below.'),
@@ -449,7 +449,7 @@ function uc_cim_settings_form() {
   );
 
   // Enable extended logging holding both XML sent and response received
-  $form['cim_settings']['cim_logging_level'] = array(
+  $form['cim_settings']['uc_cim_logging_level'] = array(
     '#type' => 'select',
     '#title' => t('Logging level'),
     '#description' => t('Extended logging stores more information about each CIM request to and response from Authorize.net, but does not log credit card or CVV numbers.'),
@@ -494,13 +494,13 @@ function uc_cim_settings_form() {
     '#collapsed' => TRUE,
     '#description' => t('These login settings are used instead of the above ones while in the test transaction mode. By setting the seperate login information below, you can save CIM credit card info to your developers account while testing.'),
   );
-  $form['cim_settings']['test_mode_settings']['cim_login_id_TEST'] = array(
+  $form['cim_settings']['test_mode_settings']['uc_cim_login_id_TEST'] = array(
     '#type' => 'textfield',
     '#title' => t('Login ID'),
     '#default_value' => variable_get('uc_cim_login_id_TEST', ''),
     '#description' => t('The login username used for the Authorize.net DEVELOPER TEST ACCOUNT.'),
   );
-  $form['cim_settings']['test_mode_settings']['cim_transaction_key_TEST'] = array(
+  $form['cim_settings']['test_mode_settings']['uc_cim_transaction_key_TEST'] = array(
     '#type' => 'textfield',
     '#title' => t('Transaction key'),
     '#default_value' => variable_get('uc_cim_transaction_key_TEST', ''),
