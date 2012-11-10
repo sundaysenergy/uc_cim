@@ -1,0 +1,2731 @@
+<?php
+
+/**
+ * @file
+ * A module used for Advanced Authorize.net payment gateway functionality
+ * based on their Customer Information Manager (CIM) API.
+ *
+ * Developed by ChadCrew
+ * For help integrating this module or setting up an Authorize.net CIM gateway and
+ * Merchant Account, please contact chadcrew  gmail.com
+ *
+ * Ported by justindodge
+ * 
+ * Patched, revised, and extended by RSTaylor
+ *
+ * TODO:
+ *   [ ] Admin report of card expiration dates
+ */
+
+require_once 'uc_cim.ca.inc';
+
+/* ******************************************************************************
+ * Drupal and Ubercart Hook Functions
+ * *****************************************************************************/
+
+/**
+ * Implementation of hook_uc_message().
+ */
+function uc_cim_uc_message() {
+  $messages['uc_cim_expiring_subject'] = t('[store-name]: Billing info needs to be updated.');
+  $messages['uc_cim_expiring_message'] = t("[user], \n\nYour billing information has a credit card on file which is expired or will be expiring soon.\n\nAccording to our information, [card-type] with last four digits \"[last-four]\" [expiration-message].\n\nTo avoid problems with your membership, please login and update your billing info.\n\nThank you, \n\n[store-name]\n[site-slogan]");
+
+  return $messages;
+}
+
+
+/**
+ * Implementation of hook_menu().
+ */
+function uc_cim_menu() {
+    //Gets the full list of CIM stored profiles and lets you delete them. Useful for testing.
+    $items['admin/store/customers/cim'] = array(
+      'title' => 'CIM Customer Profiles',
+      'page callback' => 'uc_cim_management',
+      'access arguments' => array('process credit cards'),
+      'type' => MENU_NORMAL_ITEM,
+    );
+
+    $items['admin/store/customers/cim/%/delete'] = array(
+      'title' => 'Delete CIM Customer Profiles',
+      'page callback' => 'uc_cim_delete_profile',
+      'page arguments' => array(4),
+      'access arguments' => array('process credit cards'),
+      'type' => MENU_NORMAL_ITEM,
+    );
+
+      //Charge or edit a CIM stored card from the order page
+      $items['admin/store/orders/%/cim-charge'] = array(
+        'title' => 'CIM Credit Card Terminal: Order !order_id',
+        'title arguments' => array('!order_id' => 3),
+        'description' => 'Process a credit card payment for an order using a stored credit card.',
+        'page callback' => 'uc_cim_terminal',
+        'page arguments' => array(3),
+        'access arguments' => array('process credit cards'),
+        'type' => MENU_CALLBACK
+      );
+
+      //Admin edit card
+      $items['admin/store/orders/%/cim-edit'] = array(
+        'title' => 'Edit Credit Card Information: Customer !user_id',
+        'title arguments' =>  array('!user_id' => 3),
+        'description' => 'Edit a stored credit card for a customer.',
+        'page callback' => 'uc_admin_edit_card',
+        'page arguments' => array(3),
+        'access arguments' => array('process credit cards'),
+        'type' => MENU_CALLBACK
+      );
+
+      //User edit card - arg(2) should contain the cim_ppid
+      $items['user/billing/%'] = array(
+        'title' => 'Update your credit card information',
+        'page callback' => 'uc_user_edit_card',
+        'page arguments' => array(2),
+        'access callback' => 'user_is_logged_in',
+        'type' => MENU_CALLBACK
+      );
+
+      //Refund or void a CIM stored payment from the order page
+      $items['admin/store/orders/%/payments/%/refund'] = array(
+        'title' => 'CIM Refund Terminal: Order !order_id',
+        'title arguments' =>  array('!order_id' => 3),
+        'description' => 'Process a credit card refund for an order.',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('uc_cim_refund_form', 3, 5),
+        'access arguments' => array('process credit cards'),
+        'type' => MENU_CALLBACK
+      );
+      $items['user/%user/creditcards'] = array(
+        'title' => 'Manage Credit Cards',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('uc_cim_manage_page_form', 1),
+        'access callback' => 'uc_cim_manage_cards_access',
+        'access arguments' => array(1),
+        'type' => MENU_LOCAL_TASK,
+      );
+  return $items;
+}
+
+/**
+ * Implementation of hook_theme().
+ */
+function uc_cim_theme($existing, $type, $theme, $path) {
+  return array(
+    'uc_cim_credit_form' => array(
+      'arguments' => array('form' => NULL)
+    ),
+    'uc_cim_edit_card_form' => array(
+      'arguments' => array('form' => NULL)
+    ),
+    'uc_cim_refund_form' => array(
+      'arguments' => array('form' => NULL)
+    ),
+  );
+}
+
+/**
+ * Implementation of hook_payment_gateway().
+ * http://www.ubercart.org/docs/api/hook_payment_gateway
+ */
+function uc_cim_payment_gateway() {
+  $gateways[] = array(
+    'id' => 'cim',
+    'title' => t('Authorize.net CIM'),
+    'description' => t('Process and store credit card information using the CIM service of Authorize.net.'),
+    'settings' => 'uc_cim_settings_form',
+    'credit' => 'uc_cim_charge',
+    'cim' => 'uc_cim_charge',
+  );
+  return $gateways;
+}
+
+/**
+ * Implementation of hook_payment_method().
+ */
+function uc_cim_payment_method() {
+  if (arg(0) == 'cart' && uc_credit_encryption_key() === FALSE) {
+    return;
+  }
+
+  $path = base_path() . drupal_get_path('module', 'uc_credit');
+  $title = t('Credit card:');
+  $cc_types = array('visa', 'mastercard', 'discover', 'amex');
+  foreach ($cc_types as $type) {
+    if (variable_get('uc_credit_'. $type, TRUE)) {
+      $title .= ' <img src="'. $path .'/images/'. $type .'.gif" style="position: relative; top: 5px;">';
+    }
+  }
+  $methods[] = array(
+    'id' => 'cim',
+    'name' => t('CIM Credit card'),
+    'title' => $title,
+    'desc' => t('Pay by credit card.'),
+    'callback' => 'uc_payment_method_cim',
+    'weight' => 2,
+    'checkout' => TRUE,
+  );
+
+  return $methods;
+}
+
+/**
+ * Implementation of hook_order_pane().
+ * http://www.ubercart.org/docs/api/hook_order_pane
+ */
+function uc_cim_order_pane() {
+  $panes[] = array(
+    'id' => 'cim',
+    'callback' => 'uc_order_pane_cim',
+    'title' => t('Credit Card Payment'),
+    'desc' => t('CIM Stored Credit Card processing'),
+    'class' => 'abs-left',
+    'weight' => 4,
+    'show' => array('view', 'customer', 'edit'),
+  );
+
+  return $panes;
+}
+
+/**
+ * Implementation of hook_checkout_pane().
+ * http://www.ubercart.org/docs/api/hook_checkout_pane
+ */
+function uc_cim_checkout_pane() {
+  $panes[] = array(
+    'id' => 'cim',
+    'callback' => 'uc_checkout_pane_cim',
+    'title' => 'Payment Information',
+    'desc' => t('Lets users select a credit card they already entered, or enter a new credit card and billing address.'),
+    'weight' => 6,
+    'enabled'  => FALSE,
+  );
+  $panes[] = array(
+    'id' => 'cim_functionality',
+    'callback' => 'uc_checkout_pane_cim_functionality',
+    'title' => 'CIM Functionality',
+    'desc' => t('Provides functionality to the CIM module during checkout.  This pane is not visible.'),
+    'weight' => 6,
+    'enabled'  => FALSE,
+  );
+
+  return $panes;
+}
+
+/**
+ * Implementation of hook_order().
+ * http://www.ubercart.org/docs/api/hook_order
+ */
+function uc_cim_order($op, &$arg1, $arg2) {
+  if ($arg1->payment_method != 'cim') return;
+
+  switch ($op) {
+
+    case 'submit':
+      if ($arg1->payment_method == 'cim' && variable_get('uc_credit_checkout_process', FALSE)) {
+
+        //Handle pre-orders for out of stock items by adjusting the order total, temporarily
+        $real_order_total = $arg1->order_total;
+        $arg1->order_total = uc_cim_in_stock_amount($arg1);
+
+        //Invoke uc-credit hook_order to process the payment. Need to set method to 'credit' temporarily
+        $arg1->payment_method = 'credit';
+        $return = uc_credit_order($op, $arg1, $arg2);
+        $arg1->payment_method = 'cim';
+
+        //Reset the order total to the real total, so that the order object gets saved correctly
+        $arg1->order_total = $real_order_total;
+
+        //Should return nothing on success, but array("FALSE", message) on fail...
+        return $return;
+
+      }
+      break;
+
+    case 'save':
+      //Invoke uc-credit hook_order to take care of the new credit cards. Need to set method to 'credit' temporarily
+      $arg1->payment_method = 'credit';
+      uc_credit_order($op, $arg1, $arg2);
+      $arg1->payment_method = 'cim';
+
+      //Save cim_ppid, if an *existing* card was selected. (New cards are saved in the charge function)
+      if (($arg1->cim_ppid > 0) && $arg1->payment_details['cc_number'] == NULL) {
+        db_query("UPDATE {uc_payment_cim} SET cim_ppid = %d WHERE order_id = %d", $arg1->cim_ppid, $arg1->order_id);
+        if (db_affected_rows() == 0) {
+          db_query("INSERT INTO {uc_payment_cim} (order_id, cim_ppid) VALUES (%d, %d)", $arg1->order_id, $arg1->cim_ppid);
+        }
+      }
+      break;
+
+    case 'load':
+
+      //Invoke uc-credit hook_order to take care of the new credit cards. Need to set method to 'credit' temporarily
+      $arg1->payment_method = 'credit';
+      uc_credit_order($op, $arg1, $arg2);
+      $arg1->payment_method = 'cim';
+
+      //Add in support for cim_ppid
+      $result = db_query("SELECT * FROM {uc_payment_cim} WHERE order_id = %d", $arg1->order_id);
+      if ($data = db_fetch_object($result)) {
+        $arg1->cim_ppid = $data->cim_ppid;
+      }
+      break;
+
+    case 'delete':
+      db_query("DELETE FROM {uc_payment_cim} WHERE order_id = %d", $arg1->order_id);
+      break;
+  }
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function uc_cim_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'uc_payment_by_order_form') {
+    //Add a refund link to the payments table form, if there is a transaction id stored in the serialized data (perfomance issue???)
+
+    $order = uc_order_load($form['order_id']['#value']);
+    $payments = uc_payment_load_payments($order->order_id);
+
+    if ($payments !== FALSE) {
+      foreach ($payments as $payment) {
+        $data = unserialize($payment->data);
+        if ($data['transaction_id']) {
+          $refund = l(t('Refund'), 'admin/store/orders/'. $order->order_id .'/payments/'. $payment->receipt_id .'/refund');
+          $form['payments'][$payment->receipt_id]['action']['#value'] .= '<br/>'. $refund;
+        }
+      }
+    }
+  }
+}
+
+/* END HOOKS */
+
+
+/* ******************************************************************************
+ * Callback Functions, Forms, and Tables
+ * *****************************************************************************/
+function uc_cim_settings_form() {
+  $form['cim_settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('CIM settings'),
+  );
+  // Primary settings
+  $form['cim_settings']['cim_login_id'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Login ID'),
+    '#default_value' => variable_get('cim_login_id', ''),
+    '#description' => t('The login username used for the Authorize.net service.'),
+  );
+  $form['cim_settings']['cim_transaction_key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Transaction key'),
+    '#default_value' => variable_get('cim_transaction_key', ''),
+    '#description' => t('Your API transaction key for sending encrypted data.'),
+  );
+  $form['cim_settings']['cim_delimiter'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Authorize.net response delimitting character'),
+    '#default_value' => variable_get('cim_delimiter', ','),
+    '#description' => t('Authorize.net provides success/error responses in a charcter-delimited format. Usually this is a comma (,). Sometimes its a pipe (|). If your transaction is failing but you are not getting any useful error messages in your log, this may be the reason. Check your Authorize.net Direct Response Delimiter selection.'),
+  );
+  $form['cim_settings']['cim_not_process_preorders'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Do NOT process out-of-stock items?'),
+    '#description' => t('If this is checked, the customer will not be charged for out-of-stock items at checkout. Their card will be verified, but you will have to process the charges later.'),
+    '#default_value' => variable_get('cim_not_process_preorders', FALSE),
+  );
+  $form['cim_settings']['cim_transaction_mode'] = array(
+    '#type' => 'select',
+    '#title' => t('Transaction mode'),
+    '#description' => t('"Production" and "Test Mode" will submit transactions using the login id and transaction key entered above.  "Production" sumbits real transactions.  "Test Mode" only validates credit cards, it does not process them.  This makes "Test mode" somewhat useful for testing your setup.  "Developer Test" submits transactions to the URL for a developers test account, using the login information below.'),
+    '#options' => array(
+      'production' => t('Production'),
+      'test_mode' => t('Test Mode'),
+      'test' => t('Developer Test Mode'),
+    ),
+    '#default_value' => variable_get('cim_transaction_mode', 'test'),
+  );
+
+  // Enable extended logging holding both XML sent and response received
+  $form['cim_settings']['cim_logging_level'] = array(
+    '#type' => 'select',
+    '#title' => t('Logging level'),
+    '#description' => t('Extended logging stores more information about each CIM request to and response from Authorize.net, but does not log credit card or CVV numbers.'),
+    '#options' => array(
+      'standard' => t('Standard'),
+      'extended' => t('Extended'),
+    ),
+    '#default_value' => variable_get('cim_logging_level', 'standard'),
+  );
+
+  // Enable critical error notifications
+  $form['cim_settings']['critical_error_notifications'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Critical error notifications'),
+  );
+  $form['cim_settings']['critical_error_notifications']['uc_cim_send_error_notifications'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Send error notifications'),
+    '#description' => t('If you uncheck this, no notifications will be sent on critical errors.'),
+    '#default_value' => variable_get('uc_cim_send_error_notifications', 1),
+  );
+  $account = user_load( array('uid' => 1) );
+  $form['cim_settings']['critical_error_notifications']['uc_cim_error_notifications_to'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Error notifications to'),
+    '#description' => t('In the event of critical errors, such as being unable to connect to Authorize.net, notifications will be sent to this email.'),
+    '#default_value' => variable_get('uc_cim_error_notifications_to', $account->mail),
+  );
+  $form['cim_settings']['critical_error_notifications']['uc_cim_hourly_threshold'] = array(
+    '#type' => 'textfield',
+    '#size' => 4,
+    '#title' => t('Error notifications hourly threshold'),
+    '#description' => t('To avoid flooding the recipient\'s email, only a maximum of this many error notifications will be sent per hour.'),
+    '#default_value' => variable_get('uc_cim_hourly_threshold', 3),
+  );
+
+  // Developer test mode settings
+  $form['cim_settings']['test_mode_settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('CIM test mode settings'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    '#description' => t('These login settings are used instead of the above ones while in the test transaction mode. By setting the seperate login information below, you can save CIM credit card info to your developers account while testing.'),
+  );
+  $form['cim_settings']['test_mode_settings']['cim_login_id_TEST'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Login ID'),
+    '#default_value' => variable_get('cim_login_id_TEST', ''),
+    '#description' => t('The login username used for the Authorize.net DEVELOPER TEST ACCOUNT.'),
+  );
+  $form['cim_settings']['test_mode_settings']['cim_transaction_key_TEST'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Transaction key'),
+    '#default_value' => variable_get('cim_transaction_key_TEST', ''),
+    '#description' => t('Your API transaction key for sending encrypted data to your Authorize.net DEVELOPER TEST ACCOUNT.'),
+  );
+  return $form;
+}
+
+/**
+ * Menu callback
+ * user/x/creditcards
+ * Allows user to add new and edit existing credit cards
+ */
+function uc_cim_manage_page_form($form_state, $user) {
+  drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim_manage_page.css');
+  drupal_add_js(drupal_get_path('module', 'uc_cart') .'/uc_cart.js');
+  $order->payment_details = FALSE;
+  $form = uc_cim_credit_card_form($user->uid, $order, 'billing');
+  $form['cards']['#default_value'] = 0;
+  $form['uid'] = array(
+    '#type' => 'value',
+    '#value' => $user->uid,
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Save new card',
+  );
+  //alterations go here...
+  return $form;
+}
+
+function uc_cim_manage_page_form_submit(&$form, &$form_state) {
+  uc_order_pane_cim('edit-process', $form_state['values']);
+}
+
+
+/**
+ * Callback function for CIM payment gateway
+ */
+function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table = TRUE) {
+  global $user; //For comment logging only
+
+  $gateway_message = '';
+  $bank_message = '';
+
+  //CURL is required
+  if (!function_exists('curl_init')) {
+    drupal_set_message(t('There has been an error.  Please contact customer support for assistance.'));
+    $gateway_message = 'communications error';
+    return array('success' => FALSE, 'gateway_message' => $gateway_message);
+  }
+
+  //Load the order data for this transaction
+  if (is_object($order_id)) $order = $order_id; //Support for passing an order object instead of just an ID - used for API calls
+  else $order = uc_order_load($order_id);
+  $user_id = $order->uid;
+
+  //Get the payment profile id, but let $data override whatever was stored in the order object (so admins can charge whichever stored card they want.)
+  $payment_profile_id = $order->cim_ppid;
+
+  if ($data && is_string($data)) { //@todo - Sometimes $data is not a string and throws an error.  Maybe ubercart is using different data structure.  investigate?
+    $data = unserialize($data);
+    if ($data['ppid']) {
+      $payment_profile_id = $data['ppid'];
+    }
+  }
+
+  //Check if the user is logged in.
+  if ($order->uid == 0) { //Customer
+    if ($user->uid == 0) { //Anonymous - setup their account
+      // Send anonymous users to login page when anonymous checkout is disabled.
+      if (!variable_get('uc_checkout_anonymous', TRUE)) {
+        drupal_set_message(t('You must login before you can proceed to checkout.'));
+        drupal_set_message(t('If you do not have an account, you can <a href="!url">click here</a> to create one.', array('!url' => url('user/register', array('absolute' =>  TRUE)))));
+        $_SESSION['checkout-redirect'] = TRUE;
+        drupal_goto('user');
+      }
+      // Check for an existing user account with the e-mail address from checkout.
+      $result = db_query("SELECT uid FROM {users} WHERE mail = '%s'", $order->primary_email);
+
+      // If it was found, update the order.
+      if ($account = db_fetch_object($result)) {
+        $order->uid = $account->uid;
+        db_query("UPDATE {uc_orders} SET uid = %d WHERE order_id = %d", $order->uid, $order->order_id);
+        $message_type = 'existing_user';
+      }
+      else {
+        // Get a valid new username.
+        if (empty($order->data['new_user']['name'])) {
+          $name = uc_store_email_to_username($order->primary_email);
+        }
+        else {
+          $name = $order->data['new_user']['name'];
+        }
+
+        // Setup the account fields array and save it as a new user.
+        $fields = array(
+          'name' => $name,
+          'mail' => $order->primary_email,
+          'init' => $order->primary_email,
+          'pass' => empty($order->data['new_user']['pass']) ? user_password(variable_get('uc_pwd_length', 6)) : $order->data['new_user']['pass'],
+          'roles' => array(),
+          'status' => variable_get('uc_new_customer_status_active', TRUE) ? 1 : 0,
+        );
+        $account = user_save('', $fields);
+
+        //Set a message for the user to let them know their username and password
+        $userid = $account->uid;
+        $message = t("Your user account has been created. Your username is '%name' and your password is '%pass'. These can be edited", array(
+            '%name' => $name,
+            '%pass' => $fields['pass'],
+          )
+        );
+        $message .= ' '.  l(t('here'), "user/$userid/edit") .'.';
+        drupal_set_message($message);
+
+        // Send the customer their account details if enabled.
+        if (variable_get('uc_new_customer_email', TRUE)) {
+          // Manually set the password so it appears in the e-mail.
+          $account->password = $fields['pass'];
+
+          // Send the e-mail through the user module.
+          drupal_mail('user', 'register_no_approval_required', $order->primary_email, NULL, array('account' => $account), uc_store_email_from());
+        }
+
+        // Update the order's uid in this request and in the database.
+        $order->uid = $account->uid;
+        db_query("UPDATE {uc_orders} SET uid = %d WHERE order_id = %d", $order->uid, $order->order_id);
+
+        // Doesn't work if we try to login the user - do not uncomment
+        //$form_state = array('values' => $fields);
+        //drupal_execute('user_login', $form_state);
+        user_authenticate($fields);
+
+        //Set the user_id variable for the CIM
+        $user_id = $order->uid;
+      }
+    }
+    else {                //Admin order
+      $result = array(
+        'success' => FALSE,
+        'comment' => t('You must select select or create a customer account to process an order.'),
+        'message' => t('You must select select or create a customer account to process an order.'),
+        'uid' => $user->uid,
+      );
+      return $result;
+    }
+  }
+
+  //Look up CIM customer id for the user.
+  $profile_id = uc_cim_get_profile_id($user_id);
+
+  //If there is a CIM id and a payment profile id, load the saved profile
+  if ($profile_id && ($payment_profile_id != 0)) {
+    $profile = uc_cim_get_payment_profiles($profile_id, $payment_profile_id);
+  }
+
+  //If there is a CIM id, but no payment profile id was passed, try to match an existing payment profile to the credit card entered. This means a customer can only have one entry with the same last_four.  That's better than getting "duplicate entry" errors back from auth.net.
+  if ($profile_id && ($payment_profile_id == 0)) {
+    $payment_profiles = uc_cim_get_payment_profiles($profile_id);
+    if ($payment_profiles) {
+      foreach ($payment_profiles as $profile) {
+        if ($profile['last_four'] == substr($order->payment_details['cc_number'] , -4)) {
+
+          //Save the found payment profile id
+          $payment_profile_id = $profile['customer_payment_profile_id'];
+
+          //Update our CIM stored data with the information entered to make sure it's accurate
+          $response = update_customer_payment_profile_request($profile_id, $order, $payment_profile_id);
+
+          break;
+        }
+      }
+    }
+  }
+
+  //If there's no user profile, create it now
+  if (!$profile_id) {
+    $response = create_customer_profile_request($user_id);
+    if ($response->messages->message->code == 'I00001') {
+      $profile_id = $response->customerProfileId;
+    }
+    elseif ($response->messages->message->code == 'E00039') {
+        // Authorize.net already has a customer profile for this user and
+        // won't let us create a new one, so let's load our database from that.
+        $matches = array();
+        preg_match('|A duplicate record with id (\d+) already exists.|', $response->messages->message->text, $matches);
+        $profile_id = (int)$matches[1];
+        // store it locally
+        $sql = "INSERT INTO {". uc_cim_table('uc_cim') ."} SET uid=%d, customer_profile_id=%d";
+        db_query($sql, $user_id, $profile_id);
+    }
+    else {
+      // Unable to create profile.
+      $gateway_message = (string)$response->messages->message->text;
+      $result = array(
+        'success' => FALSE,
+        'message' => t('Unable to store payment info on secure server.  For your safety, this transaction cannot be completed at this time.  Please try again soon.  This error has been logged and will be investigated.'),
+        'gateway_message' => $gateway_message,
+      );
+      watchdog('uc_cim', t('Unable to create customer profile during checkout.  Order: !order_id  User: !user_id  Code: !code  Text: !text'), array('!order_id' => $order->order_id, '!user_id' => $order->uid, '!code' => (string)$response->messages->message->code, '!text' => (string)$response->messages->message->text), WATCHDOG_ERROR);
+      return $result;
+    }
+  }
+
+  //If there's no payment profile, create it now
+  if ($payment_profile_id == 0) {
+    $response = create_customer_payment_profile_request($profile_id, $order);
+    $payment_profile_id = $response->customerPaymentProfileId;
+    $new_cim_ppid = TRUE;
+  }
+
+  //Process transaction using the payment profile. If it's a $0 order (and it's not a new cim_ppid, which was just validated), just validate the profile.
+  if ($profile_id && $payment_profile_id != 0 && $amount > 0) {
+
+    //If we're in test mode (not developer test mode or production) just validate the card.  The best we can do...
+    if (variable_get('cim_transaction_mode', 'test') == 'test_mode') $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
+    else $response = create_customer_profile_transaction_request($profile_id, $payment_profile_id, $order, $amount);
+
+  }
+  elseif ($profile_id && $payment_profile_id != 0 && $amount <= 0 && !$new_cim_ppid) {
+    $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
+  }
+
+  if ($response) {
+    $gateway_message = (string)$response->messages->message->text;
+  }
+  else {
+    $gateway_message = t('Invalid response from gateway.');
+  }
+
+  //Process the response
+  if (!isset($response->directResponse) && isset($response->messages->message->code) && $response->messages->message->code != 'I00001') {
+    //If we failed to create a profile, we just have the CIM gateway error message
+    $directResponse[0] = 0;
+    $directResponse[3] = $response->messages->message->text;
+  }
+  elseif ($response->directResponse) {
+    //If we processed a transaction, we'll have a directResponse from the bank with the details.
+    $directResponse = explode(variable_get('cim_delimiter', ','), $response->directResponse);
+    if (!is_numeric($directResponse[0])) {
+      // wrong delimiter.  try the other one and log the problem
+      // If this still fails, the response should be handled correctly since
+      //   it is cast to an integer, but authorization code will be lost.
+      $delimiter = (variable_get('cim_delimiter', ',') == ',') ? '|' : ',';
+      $directResponse = explode($delimiter, $response->directResponse);
+      watchdog('uc_cim', 'Incorrect delimiter "'. variable_get('cim_delimiter', ',') .'" set for response: '. $response->directResponse .'. Raw CIM response: '. $response->messages->message->text, array(), WATCHDOG_WARNING);
+    }
+    $bank_message = $directResponse[3];
+  }
+  elseif ($response->validationDirectResponse) {
+    //If we failed to process the transaction but did perform a validation during payment profile creation, we'll have a validationDirectResponse with the details. Note that the respose for validate_customer_payment_profile_request is in directResonse. Go figure. That's ok, though, it's handled above.
+    $directResponse = explode(variable_get('cim_delimiter', ','), $response->validationDirectResponse);
+    if (!is_numeric($directResponse[0])) {
+      // wrong delimiter.  try the other one and log the problem
+      // If this still fails, the response should be handled correctly since
+      //   it is cast to an integer, but authorization code will be lost.
+      $delimiter = (variable_get('cim_delimiter', ',') == ',') ? '|' : ',';
+      $directResponse = explode($delimiter, $response->validationDirectResponse);
+      watchdog('uc_cim', 'Incorrect delimiter "'. variable_get('cim_delimiter', ',') .'" set for response: '. $response->directResponse .'. Raw CIM response: '. $response->messages->message->text, array(), WATCHDOG_WARNING);
+    }
+    $bank_message = $directResponse[3];
+  }
+  else {
+    //This should never happen... but just in case...
+    $directResponse[0] = 0;
+    $directResponse[3] = 'Error: '. $response->messages->message->text;
+  }
+
+  $response_code = $directResponse[0];
+  $response_text = $directResponse[3];
+  $approval_code = $directResponse[4];
+  $transaction_id = $directResponse[6];
+  $amount_charged = $directResponse[9];
+
+  if ($response_code != 1) {
+    $message = t('Credit card declined: !amount', array('!amount' => uc_currency_format($amount_charged)));
+    $result = array(
+      'success' => FALSE,
+      'comment' => t('Credit card payment failed: !text', array('!text' => $response_text)),
+      'message' => t('Credit card payment failed: !text', array('!text' => $response_text)),
+      'uid' => $user->uid,
+      'gateway_message' => $gateway_message,
+      'bank_message' => $bank_message,
+    );
+    watchdog('uc_cim', 'CIM Charge failure. Raw gateway response: '. $response->directResponse .'. Raw CIM response: '. $response->messages->message->text, array(), WATCHDOG_NOTICE);
+  }
+  else {
+    if ($amount > 0) {
+      $message = t('Credit card charged: !amount', array('!amount' => uc_currency_format($amount_charged)));
+      $last_four = $profile['last_four'] ? $profile['last_four'] : substr($order->payment_details['cc_number'] , -4);
+      $result = array(
+        'success' => TRUE,
+        'comment' => t('Credit card payment processed successfully. Approval code: !code', array('!code' => $approval_code)),
+        'message' => t('Credit card payment processed successfully. Approval code: !code', array('!code' => $approval_code)),
+        'uid' => $user->uid,
+        'data' => array(
+          'transaction_id' => $transaction_id,  //Save the transaction id, so we can perform refunds
+          'last_four' => $last_four,            //Save the last four CC #'s of this payment (since we can now use more than 1 CC per order), so we can issue refunds.
+        ),
+        'gateway_message' => $gateway_message,
+        'bank_message' => $bank_message,
+      );
+    }
+    else {
+      $message = t('Credit card verified: !text', array('!text' => $response_text));
+      $result = array(
+        'success' => TRUE,
+        'comment' => $message,
+        'message' => $message,
+        'uid' => $user->uid,
+        'gateway_message' => $gateway_message,
+        'bank_message' => $bank_message,
+      );
+    }
+  }
+
+  //Save the comment if there is an order_id.  If this was called from an API call, there may be no order_id
+  if ($order->order_id) uc_order_comment_save($order->order_id, $user->uid, $message, 'admin'); //currently doesn't save the uid (0)
+
+  //Save the cim_ppid to the order object, so that we can know later which credit card was used on this order. We don't have access to the pass-by-reference object here, so we need to save it to the db.
+  //BUT only if the $update_cim_order_table flag is set. This allows uc_cim_charge to be used as an API call (ie, not used in a normal checkout).
+  if ($payment_profile_id != 0 && $update_cim_order_table == TRUE) {
+    db_query("UPDATE {uc_payment_cim} SET cim_ppid = %d WHERE order_id = %d", $payment_profile_id, $order->order_id);
+    if (db_affected_rows() == 0) {
+      db_query("INSERT INTO {uc_payment_cim} (order_id, cim_ppid) VALUES (%d, %d)", $order->order_id, $payment_profile_id);
+    }
+  }
+
+  //Add cim profile id used to the $result array, so that API calls know what was used
+  $result['cim_ppid'] = $payment_profile_id;
+
+  return $result;
+}
+
+/**
+ * @todo This function should utilize callback arguments from the D6 menu system instead of checking arg()
+ */
+function uc_cim_management() {
+
+  if (!is_numeric(arg(4))) {
+    //The table to get from depends on test mode or production mode - get the right one
+    $table = uc_cim_table('uc_cim');
+
+    //Get all profiles
+    $sql = "SELECT * FROM {". $table ."}";
+    $result = db_query($sql);
+    while ($getdata = db_fetch_array($result)) {
+      $row = array();
+      $row['data'][0] = $getdata['uid'];
+      $row['data'][1] = l($getdata['customer_profile_id'], 'admin/store/customers/cim/'. $getdata['customer_profile_id']);
+      $row['data'][2] = l('delete', 'admin/store/customers/cim/'. $getdata['customer_profile_id'] .'/delete');
+      $rows[] = $row;
+    }
+
+    $header = array('UID', 'Profile ID', 'Delete');
+    $output .= theme_table($header, $rows);
+  }
+  elseif (is_numeric(arg(4))) {
+
+    //Get profile details
+    $profile_id = arg(4);
+
+    //Build XML to post
+    $content =
+    '<?xml version="1.0" encoding="utf-8"?>'.
+    '<getCustomerProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+    merchant_auth_xml() .
+      '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+    '</getCustomerProfileRequest>';
+
+    //Send the XML via curl
+    $response = uc_cim_curl_send($content);
+
+    $output .= '<p>CIM Data Request Status: '. $response->messages->message->code .' ('. $response->messages->message->text .')</p>';
+    $output .= '<p>'. l('return to profile list', 'admin/store/customers/cim') .'</p>';
+
+    $output .= '<h2>Customer Profile:</h2>';
+    $output .= 'User ID: '. $response->profile->merchantCustomerId .'<br/>';
+    $output .= 'Description: '. $response->profile->description .'<br/>';
+    $output .= 'Email: '. $response->profile->email .'<br/>';
+    $output .= 'Profile ID: '. $response->profile->customerProfileId .'<br/>';
+
+    $output .= '<h2>Payment Profiles:</h2>';
+    foreach ($response->profile->paymentProfiles as $profile) {
+      $output .= '<div class="payment-profile">';
+      $output .= '<b>Payment Profile ID: </b>'. $profile->customerPaymentProfileId .'<br/>';
+      $output .= '<b>Billing Address:</b><br/>';
+      foreach ((array) $profile->billTo as $key => $value) {
+        $output .= $key .': '. $value .'<br/>';
+      }
+      $output .= '<b>Credit Card:</b>'. $profile->payment->creditCard->cardNumber .'<br/>';
+      $output .= '</div>';
+    }
+  }
+  //Add our CSS for some formatting
+  drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
+
+  return $output;
+}
+//CHECKOUT and ORDER screens
+function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-cim-billing-address-billing', $delivery_path = 'panes-delivery-delivery') {
+
+  //Add our css and revised javascript for copying addresses to our revised address form
+  drupal_add_js(drupal_get_path('module', 'uc_cim') .'/uc_cim.js');
+  drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
+  drupal_add_css(drupal_get_path('module', 'uc_cart') .'/uc_cart.css'); //For pages where the form is used not on the checkout screen, we still need that cart styling...
+  $edit_card = '<img src="'. base_path() . drupal_get_path('module', 'uc_cim') .'/edit_credit_card.png" title="Edit credit card information" class="edit-card"/>';
+
+  //Get credit cards already entered, for user id passed in
+  if ($user_id) {
+    $profile_id = uc_cim_get_profile_id($user_id);
+    if ($profile_id) $profiles = uc_cim_get_payment_profiles($profile_id);
+    if ($profiles) {
+      foreach ($profiles as $profile) {
+        //The edit card info link depends on where we are
+        if (arg(0) == 'admin') $edit_link = l($edit_card, 'admin/store/orders/'. $order->uid .'/cim-edit/'. $profile['customer_payment_profile_id'], array('query' => 'dest='. $_GET['q'], 'html' => TRUE));
+        else $edit_link = l($edit_card, 'user/billing/'. $profile['customer_payment_profile_id'], array('query' => 'dest='. $_GET['q'], 'html' => TRUE));
+
+        //Shorten American Express to Amex to save space
+        if ($profile['cc_type'] == 'American Express') $profile['cc_type'] = 'Amex';
+
+        //Create the options
+        $options[$profile['customer_payment_profile_id']] = $profile['cc_type'] .': '. uc_credit_display_number($profile['last_four']) .' '. $edit_link;
+      }
+      $options[0] = 'Enter a new credit card';
+    }
+  }
+
+  //Display existing credit cards
+  if ($options) {
+    $existing_cards_form['cards'] = array(
+      '#type' => 'radios',
+      '#title' => t('Credit Cards'),
+      '#options' => $options,
+      '#default_value' => is_numeric($order->cim_ppid) ? $order->cim_ppid : array_shift(array_keys($options)),
+      '#required' => TRUE,
+      '#attributes'  => array('onclick' => "uc_cim_toggle_new_card(this.value);"),
+      '#prefix' => '<div class="choose-credit-card">',
+      '#suffix' => '</div>',
+    );
+  }
+
+  //Get the new credit card form
+  $credit_form['credit_card'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('New credit card'),
+    '#attributes' => array('id' => 'credit-card'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+    '#prefix' => '<div class="enter-new-credit-card">',
+  );
+  $credit_form['credit_card'] = array_merge($credit_form['credit_card'], uc_payment_method_credit_form(array(), $order));
+
+  //Make a couple changes so that it displays better in our form
+  $credit_form['credit_card']['cc_policy']['#value'] = '';
+  $credit_form['credit_card']['cc_number']['#title'] = '';
+  $credit_form['credit_card']['cc_exp_month']['#title'] = '';
+  $credit_form['credit_card']['cc_exp_year']['#title'] = '';
+  $credit_form['credit_card']['#theme'] = 'uc_cim_credit_form';
+
+  //Get the billing address form
+  $billing_form_temp = uc_checkout_pane_billing('view', $order, NULL);
+
+  //Remove the required tag, if there are existing credit cards
+  if ($existing_cards_form) {
+    foreach ($billing_form_temp['contents'] as $key => $billing_form_item) {
+      $billing_form_temp['contents'][$key]['#required'] = FALSE;
+    }
+  }
+
+  //Put the billing address form in a fieldset
+  $billing_form['billing_address'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Billing address for new credit card'),
+    '#attributes' => array('id' => 'billing-address'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+    '#theme' => $billing_form_temp['theme'],
+    '#suffix' => '</div>',
+  );
+  $address_form['billing_address'] = array_merge($billing_form['billing_address'], $billing_form_temp['contents']);
+
+  //For admin orders, add copy shipping info checkbox to billing address, because it won't be set for new orders
+  if (arg(0) == 'admin' && arg(2) == 'orders') $contents['copy_address'] = array( '#type' => 'checkbox', '#title' => t('My billing information is the same as my delivery information.'), '#attributes' => array('onclick' => "uc_cart_copy_address(this.checked, 'delivery', 'billing');") );
+
+  //Set new javascript functions for our billing form so that copy and update address JS works
+  $address_form['billing_address']['copy_address']['#attributes']['onclick'] = 'uc_cim_copy_delivery_to_billing(this.checked, "'. $address_book_path .'", "'. $delivery_path .'");';
+  if ($address_form['billing_address']['billing_address_select']) {
+    $address_form['billing_address']['billing_address_select'] = uc_select_address($user_id, 'billing', "uc_cim_apply_address('". $address_book_path ."', this.value);", $title = NULL, $icon_suffix = FALSE);
+  }
+
+  //MERGE ALL
+  if ($existing_cards_form) {
+    $form = array_merge($existing_cards_form, $credit_form, $address_form);
+  }
+  else {
+    $form = array_merge($credit_form, $address_form);
+    $form['credit_card']['#title'] = 'Credit card';
+    $form['credit_card']['#collapsed'] = FALSE;
+    $form['billing_address']['#collapsed'] = FALSE;
+    $form['credit_card']['#prefix'] = '<div class="no-credit-cards-stored">';
+  }
+
+  return $form;
+}
+
+/**
+ * Helper function for debugging
+ */
+function uc_cim_printr($data) {
+  return '<pre>'. print_r($data, TRUE) .'</pre>';
+}
+
+/**
+ * Checkout Pane Builder Function
+ * http://www.ubercart.org/docs/developer/245/checkout
+ *
+ * @param  $op
+ * ops:
+ * view - Called to display the pane on the checkout screen. Expected to return a pane object with the attribute fields set to be an array of form elements. $arg1 is the current order object if it exists.
+ * review - Called to display a review of the pane's information the order review screen when checking out. Expected to return a string containing HTML output that will be dropped into a div. $arg1 is the current order object.
+ * process - Called when the temporary order is created during checkout after the customer continues from the checkout screen and before the review screen is displayed. No return is expected. $arg1 is a reference to the current order object. (So, by modifying $arg1 in the process block, you are modifying the actual order.) $arg2 is the contents of the array of the submitted form information for that pane.
+ *
+ * @param $arg1 - The order object, taken by reference when the op is 'process'
+ *
+ * @param $arg2 - Submitted form information from this pane
+ */
+function uc_checkout_pane_cim($op, &$arg1, $arg2) {
+  switch ($op) {
+    case 'view':
+      global $user;
+      //Get the CIM credit card form
+      $arg1->payment_details = uc_credit_cache('save', $_SESSION['sescrd']);
+      $contents = uc_cim_credit_card_form($user->uid, $arg1);
+
+      //Add the appropriate description
+      if (sizeof($contents['cards']['#options'] > 1)) $description = t('Select a credit card you used previously or enter a new one:');
+      else $description = t('Enter your billing information below.');
+
+      return array('description' => $description, 'contents' => $contents);
+
+    case 'process':
+      //Set the payment method to cim so that we can add some functionality before calling uc_credit submit function.
+      $arg1->payment_method = 'cim';
+
+      //Store the payment profile id for processing later
+      $arg1->cim_ppid = $arg2['cards'];
+      db_query("UPDATE {uc_payment_cim} SET cim_ppid = %d WHERE order_id = %d", $arg1->cim_ppid, $arg1->order_id);
+      if (db_affected_rows() == 0) {
+        db_query("INSERT INTO {uc_payment_cim} (order_id, cim_ppid) VALUES (%d, %d)", $arg1->order_id, $arg1->cim_ppid);
+      }
+
+      if ($arg2['cards'] == 0) {
+        //If the user selected to enter a new card....
+
+        //Store the credit card details in the order object
+        $formvalues_temp = array_merge($arg2['credit_card'], $arg2['billing_address']);
+        uc_cim_create_order_object($arg1, $formvalues_temp, TRUE);
+
+        //Put CC data in POST and call the uc_credit process function to let it handle encrptyed credit card data
+        $_POST['cc_type'] = $arg2['credit_card']['cc_type'];
+        $_POST['cc_owner'] = $arg2['credit_card']['cc_owner'];
+        $_POST['cc_number'] = $arg2['credit_card']['cc_number'];
+        $_POST['cc_exp_month'] = $arg2['credit_card']['cc_exp_month'];
+        $_POST['cc_exp_year'] = $arg2['credit_card']['cc_exp_year'];
+        $_POST['cc_cvv'] = $arg2['credit_card']['cc_cvv'];
+        $_POST['cc_bank'] = $arg2['credit_card']['cc_bank'];
+
+        $return = uc_payment_method_credit('cart-process', $arg1);
+
+        //If another button was pressed, don't validate (support for uc_gift_card module, for instance)
+        if ($_POST['op'] != variable_get('uc_checkout_review_button', t('Review order'))) {
+          return TRUE;
+        }
+
+        return $return;
+      }
+      else {
+        // Using existing payment profile.  Add billing address info to order
+        uc_cim_update_order_billing_address($arg1);
+      }
+
+      return TRUE;
+
+    case 'review':
+      //Dont display our review pane if cim wasn't used as the payment method
+      if (  $arg1->payment_method != 'cim') {
+        return;
+      }
+
+      //Display line items - Copied from uc_payment_checkout_pane
+      $line_items = $arg1->line_items;
+      $items = _line_item_list();
+      foreach ($items as $item) {
+        if (isset($item['display_only']) && $item['display_only'] == TRUE) {
+          $result = $item['callback']('display', $arg1);
+          if (is_array($result)) {
+            foreach ($result as $line) {
+              $line_items[] = array(
+                'title' => $line['title'],
+                'amount' => $line['amount'],
+                'weight' => $item['weight']
+              );
+            }
+          }
+        }
+      }
+      usort($line_items, 'uc_weight_sort');
+      foreach ($line_items as $line_item) {
+        $review[] = array('title' => $line_item['title'], 'data' => uc_currency_format($line_item['amount']));
+      }
+
+      //Add our pre-order total line item -- Not working great because of complications (taxes, discounts, etc.)
+      /* $charge_now = uc_cim_in_stock_amount($arg1);
+      $review[] = array('border' => 'top', 'title' => 'Pre-ordered (charged when item ships)', 'data' => uc_currency_format($arg1->order_total - $charge_now));
+      $review[] = array('title' => 'Total charged now', 'data' => uc_currency_format($charge_now)); */
+
+      $review[] = array('border' => 'top', 'title' => t('Paying by'), 'data' => 'Credit Card');
+
+      if ($arg1->cim_ppid == 0) {
+        //If the user entered a new card, display the usual card and address data:
+
+        //Display credit card data - Copied from uc_credit cart-review
+        if (variable_get('uc_credit_type_enabled', FALSE)) {
+          $review[] = array('title' => t('Card Type'), 'data' => $arg1->payment_details['cc_type']);
+        }
+        if (variable_get('uc_credit_owner_enabled', TRUE)) {
+          $review[] = array('title' => t('Card Owner'), 'data' => $arg1->payment_details['cc_owner']);
+        }
+        $review[] = array('title' => t('Card Number'), 'data' => uc_credit_display_number($arg1->payment_details['cc_number']));
+        $review[] = array('title' => t('Expiration'), 'data' => $arg1->payment_details['cc_exp_month'] .'/'. $arg1->payment_details['cc_exp_year']);
+        if (variable_get('uc_credit_cvv_enabled', TRUE)) {
+          $review[] = array('title' => t('CVV'), 'data' => user_access('view cc numbers') ? $arg1->payment_details['cc_cvv'] : str_repeat('-', strlen($arg1->payment_details['cc_cvv'])));
+        }
+        if (variable_get('uc_credit_bank_enabled', FALSE)) {
+          $review[] = array('title' => t('Issuing Bank'), 'data' => $arg1->payment_details['cc_bank']);
+        }
+
+        //Display billing address - Copied from uc_cart_checkout_pane_billing review
+        $review[] = array('title' => t('Address'), 'data' => uc_order_address($arg1, 'billing', FALSE));
+        if (uc_address_field_enabled('phone') && !empty($arg1->billing_phone)) {
+          $review[] = array('title' => t('Phone'), 'data' => check_plain($arg1->billing_phone));
+        }
+      }
+      else {
+        //Get the selected card profile and display it's payment summary
+
+        $profile_id = uc_cim_get_profile_id($arg1->uid);
+        if ($profile_id) $profile = uc_cim_get_payment_profiles($profile_id, $arg1->cim_ppid);
+
+        if (variable_get('uc_credit_type_enabled', FALSE)) {
+          $review[] = array('title' => t('Card Type'), 'data' => $profile['cc_type']);
+        }
+        $review[] = array('title' => t('Card Number'), 'data' => uc_credit_display_number($profile['last_four']));
+        $review[] = array('title' => t('Expiration'), 'data' => $profile['cc_exp_month'] .'/'. $profile['cc_exp_year']);
+
+      }
+      return $review;
+
+  }
+}
+function uc_order_pane_cim($op, $arg1) {
+
+  drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
+  drupal_add_css(drupal_get_path('module', 'uc_cart') .'/uc_cart.css');
+  drupal_add_js(drupal_get_path('module', 'uc_cim') .'/uc_cim.js');
+
+  switch ($op) {
+    case 'view':
+      //Display order payment balance
+      if (variable_get('uc_payment_tracking', TRUE)) {
+        $output = t('Balance:') .' '. uc_currency_format(uc_payment_balance($arg1));
+        $output .= ' ('. l(t('View'), 'admin/store/orders/'. $arg1->order_id .'/payments') .')<br />';
+      }
+
+      //Add list of credit cards
+      $profile_id = uc_cim_get_profile_id($arg1->uid);
+      if ($profile_id) {
+        $profiles = uc_cim_get_payment_profiles($profile_id);
+      }
+      if (is_array($profiles)) {
+        foreach ($profiles as $profile) {
+          if ($arg1->cim_ppid == $profile['customer_payment_profile_id']) $output .= '<span class="cim-card-used">';
+            $output .= $profile['cc_type'] .': x'. $profile['last_four'] .' ';
+            $output .= l('(charge)', 'admin/store/orders/'. $arg1->order_id .'/cim-charge/'. $profile['customer_payment_profile_id'], array(), 'dest=admin/store/orders/'. $arg1->order_id) .' ';
+            $output .= l('(edit)', 'admin/store/orders/'. $arg1->uid .'/cim-edit/'. $profile['customer_payment_profile_id'], array('attributes' => array('title' => 'Edit credit card information'), 'query' => 'dest=admin/store/orders/'. $arg1->order_id)) .'<br/>';
+          if ($arg1->cim_ppid == $profile['customer_payment_profile_id']) {
+            $output .= '</span>';
+          }
+        }
+      }
+      $output .= l('Add a credit card', 'admin/store/orders/'. $arg1->uid .'/cim-edit', array('query' => 'dest=admin/store/orders/'. $arg1->order_id)) .'<br/>';
+      return $output;
+
+    case 'customer':
+      $profile_id = uc_cim_get_profile_id($arg1->uid);
+      if ($profile_id && $arg1->cim_ppid != 0) {
+        $profile = uc_cim_get_payment_profiles($profile_id, $arg1->cim_ppid);
+      }
+      if ($profile) {
+        $output = $profile['cc_type'] .': XXXX'. $profile['last_four'];
+      }
+      else {
+        $output = $arg1->payment_details['cc_type'] .': XXXX'. $arg1->payment_details['cc_number'];
+      }
+      $output .= drupal_get_form('uc_cim_switch_payment_profile_form', $arg1, $profile);
+      return $output;
+
+    case 'edit-form':
+      $form = uc_cim_credit_card_form($arg1->uid, $arg1, 'billing', 'delivery');
+
+      //Add the required tag, if there are NO existing credit cards, to the credit card form
+      if (count($form['cards']['#options']) < 1) {
+        $elements = element_children($form['credit_card']);
+        foreach ($elements as $element) {
+          $form['credit_card'][$element]['#required'] = TRUE;
+        }
+      }
+      return $form;
+
+    case 'edit-theme':
+      $output = '<div class="order-edit-cim">';
+      $output .= drupal_render($arg1['cards']);
+      $output .= drupal_render($arg1['credit_card']);
+      $output .= drupal_render($arg1['billing_address']);
+      $output .= '</div>';
+      return $output;
+
+    case 'edit-process':
+
+      //If an existing card was selected, just save that selection
+      if ($arg1['cards'] != 0) $changes['cim_ppid'] = $arg1['cards'];
+
+      //Otherwise, save the whole form
+      else {
+        //Save the form
+        $changes['cim_ppid'] = $arg1['cards'];
+        $changes['payment_details']['cc_number'] = check_plain($arg1['cc_number']);
+        $changes['payment_details']['cc_type'] = check_plain($arg1['cc_type']);
+        $changes['payment_details']['cc_owner'] = check_plain($arg1['cc_owner']);
+        $changes['payment_details']['cc_exp_month'] = check_plain($arg1['cc_exp_month']);
+        $changes['payment_details']['cc_exp_year'] = check_plain($arg1['cc_exp_year']);
+        $changes['payment_details']['cc_cvv'] = check_plain($arg1['cc_cvv']);
+        $changes['payment_details']['cc_bank'] = check_plain($arg1['cc_bank']);
+        $changes['billing_first_name'] = $arg1['billing_first_name'];
+        $changes['billing_last_name'] = $arg1['billing_last_name'];
+        $changes['billing_company'] = $arg1['billing_company'];
+        $changes['billing_street1'] = $arg1['billing_street1'];
+        $changes['billing_street2'] = $arg1['billing_street2'];
+        $changes['billing_city'] = $arg1['billing_city'];
+        $changes['billing_zone'] = $arg1['billing_zone'];
+        $changes['billing_postal_code'] = $arg1['billing_postal_code'];
+        $changes['billing_country'] = $arg1['billing_country'];
+        $changes['billing_phone'] = $arg1['billing_phone'];
+
+        //Set the payment method to cim, so that we can take care of partial payments
+        $changes['payment_method'] = 'cim';
+
+        //Validate the new credit card
+        $process = TRUE;
+        if (variable_get('uc_credit_owner_enabled', TRUE) && empty($arg1['cc_owner'])) {
+          drupal_set_message(t('Enter the owner name as it appears on the card.'), 'error');
+          $process = FALSE;
+        }
+        if (variable_get('uc_credit_cvv_enabled', TRUE) && !_valid_cvv($arg1['cc_cvv'])) {
+          drupal_set_message(t('You have entered an invalid CVV number.'), 'error');
+          $process = FALSE;
+        }
+        if (variable_get('uc_credit_bank_enabled', FALSE) && empty($arg1['cc_bank'])) {
+          drupal_set_message(t('You must enter the issuing bank for that card.'), 'error');
+          $process = FALSE;
+        }
+        if (variable_get('uc_credit_validate_numbers', TRUE) && !_valid_card_number($arg1['cc_number'])) {
+          drupal_set_message(t('You have entered an invalid credit card number.'), 'error');
+          $process = FALSE;
+        }
+        if (!$process) return $changes;
+
+        //Then create and validate the new profile by sending $0 to the charge function with an order object.
+        uc_cim_create_order_object($order, $arg1, TRUE);  //Create the order object.
+        $order->uid = $arg1['uid'];
+        $order->order_id = $arg1['order_id'];
+        $result = uc_cim_charge($order, 0);
+        if ($result['success'] == TRUE) {
+          drupal_set_message($result['message']);
+
+          //Mask the stored credit card
+          if (variable_get('uc_credit_checkout_no_store', FALSE)) {
+            $changes['payment_details']['cc_number'] = substr($changes['payment_details']['cc_number'], -4);
+            $changes['payment_details']['cc_cvv'] = '000';
+            //Handled by uc_credt_order save: db_query("UPDATE {uc_payment_credit} SET cc_number = RIGHT(cc_number, 4), cc_cvv = '000' WHERE order_id = %d", $arg1['order_id']);
+          }
+        }
+        else drupal_set_message($result['message'], 'error');
+      }
+
+      return $changes;
+
+  }
+}
+//Charge a credit card
+function uc_cim_terminal($order_id) {
+  $order = uc_order_load($order_id);
+  if ($order === FALSE) {
+    drupal_set_message(t('Order !order_id does not exist.', array('!order_id' => $order_id)));
+    drupal_goto('admin/store/orders');
+  }
+
+  //Add our CSS for some formatting
+  drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
+
+  //Get the customer payment profile
+  $profile_id = uc_cim_get_profile_id($order->uid);
+  $payment_profile_id = arg(5);
+  $response = get_customer_payment_profile_request($profile_id, $payment_profile_id);
+
+  //Display the profile and a terminal form
+  $output .= '<div class="stored-credit-card">';
+  $output .= '<h3>Stored Credit Card:</h3>';
+
+  if ($response->messages->message->code != 'I00001') {
+    $output .= '<p>ERROR: '. $response->messages->message->code .' ('. $response->messages->message->text .')</p>';
+    $output .= '</div>';
+  }
+  else {
+    $output .= '<b>Credit Card: </b>'. $response->paymentProfile->payment->creditCard->cardNumber .'<br/>';
+    $output .= '<b>Expiration: </b>'. $response->paymentProfile->payment->creditCard->expirationDate .'<br/>';
+    $output .= '<b>Billing Address:</b><br/>';
+    foreach ((array) $response->paymentProfile->billTo as $key => $value) {
+      $row['data'][0] = $key;
+      $row['data'][1] = $value;
+      $rows[] = $row;
+    }
+    $output .= theme_table(array(), $rows);
+    $output .= '</div>';
+
+    //Display the terminal form
+    $output .= '<h3>Charge a stored Credit Card</h3>';
+    $output .= l(t('Return to order view screen.'), 'admin/store/orders/'. $order_id);
+
+    $balance = uc_payment_balance($order);
+    $output .= '<p>'. t('Use this terminal to process credit card payments. Confirm that the stored credit card information is correct.') .'</p>'
+              .'<table style="width:20em"><tbody style="border-top: 0px;"><tr><td><strong>'
+             . t('Order total:') .'</strong> </td><td>'
+             . uc_currency_format($order->order_total) .'</td></tr><tr><td>'
+              .'<strong>'. t('Balance:') .'</strong> </td><td>'
+             . uc_currency_format($balance) .'</td></tr></tbody></table>';
+
+    $output .= drupal_get_form('uc_cim_terminal_form', $order_id, $balance, $payment_profile_id);
+  }
+
+  return $output;
+}
+
+function uc_cim_terminal_form($form_state, $order_id, $amount = 0, $payment_profile_id) {
+  $form['amount'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Charge Amount'),
+    '#default_value' => uc_currency_format($amount, FALSE, FALSE),
+    '#size' => 10,
+    '#weight' => 0,
+    '#field_prefix' => variable_get('uc_sign_after_amount', FALSE) ? '' : variable_get('uc_currency_sign', '$'),
+    '#field_suffix' => variable_get('uc_sign_after_amount', FALSE) ? variable_get('uc_currency_sign', '$') : '',
+  );
+  $form['order_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $order_id,
+  );
+  $form['payment_profile_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $payment_profile_id,
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Charge Card'),
+    '#weight' => 10,
+  );
+
+  return $form;
+}
+
+function uc_cim_terminal_form_validate($form, $form_state) {
+  $formvalues = $form_state['values'];
+  if (!is_numeric($formvalues['amount']) || $formvalues['amount'] <= 0) {
+    form_set_error('amount', t('You must enter a positive number for the amount. Process refunds from the payment tab.'));
+  }
+
+  $order = uc_order_load($formvalues['order_id']);
+  if ($order === FALSE) {
+    form_set_error('', t('Invalid order ID.  Unable to process payment.'));
+  }
+}
+
+function uc_cim_terminal_form_submit($form, $form_state) {
+  $formvalues = $form_state['values'];
+  $data = array('ppid' => $formvalues['payment_profile_id']);
+  $data = serialize($data);
+  uc_payment_process('credit', $formvalues['order_id'], $formvalues['amount'], $data, FALSE, 'cim', TRUE);
+}
+
+//Edit card info
+function uc_admin_edit_card($user_id) {
+
+  //Display link back to this customer's orders to
+  $output .= '<p>To update any of the credit card information you must re-enter the credit card number.</p>';
+
+  //Get the cim_ppid to edit
+  if (is_numeric(arg(5))) $payment_profile_id = arg(5);
+
+  //Get the form
+  $output .= '<div id="error-output"></div>';
+  $output .= drupal_get_form('uc_cim_edit_card_form', $user_id, $payment_profile_id);
+
+  return $output;
+
+}
+
+function uc_user_edit_card($payment_profile_id) {
+  global $user;
+
+  //Display instructions to the user
+  $output .= '<p>To update any of your credit card information you must re-enter your credit card number.</p>';
+
+  //Get the form - with user's id
+  $output .= drupal_get_form('uc_cim_edit_card_form', $user->uid, $payment_profile_id);
+
+  return $output;
+
+}
+
+function uc_cim_edit_card_form($form_state, $user_id, $payment_profile_id = NULL) {
+
+  //Get the customers CIM profile id, or create a new one
+  $profile_id = uc_cim_get_profile_id($user_id);
+
+  //If this customer doesn't have an id yet, create it now
+  if (!$profile_id) {
+    $response = create_customer_profile_request($user_id);
+    $profile_id = $response->customerProfileId;
+  }
+  else {
+    if (is_numeric($payment_profile_id)) {
+      //If we're editing a card, get that card info now
+      $payment_profile_id = $payment_profile_id;
+      $database_profile = uc_cim_get_payment_profiles($profile_id, $payment_profile_id);
+      $response = get_customer_payment_profile_request($profile_id, $payment_profile_id);
+
+      if ($response->messages->message->code != 'I00001') {
+        $message = 'ERROR: '. $response->messages->message->code .' ('. $response->messages->message->text .')';
+        drupal_set_message($message, 'error');
+        drupal_goto($_GET['dest']);
+      }
+    }
+  }
+
+  //Create an object in the "order format"
+  $order->uid = $user_id;
+  $order->payment_details['cc_number'] = (string)$response->paymentProfile->payment->creditCard->cardNumber;
+  $order->payment_details['cc_type'] = $database_profile['cc_type'];
+  $order->payment_details['cc_exp_month'] = $database_profile['cc_exp_month'];
+  $order->payment_details['cc_exp_year'] = $database_profile['cc_exp_year'];
+  $order->order->payment_details['cc_type'] = $database_profile['cc_type'];
+  $order->billing_first_name = (string)$response->paymentProfile->billTo->firstName;
+  $order->billing_last_name = (string)$response->paymentProfile->billTo->lastName;
+  $order->billing_company = (string)$response->paymentProfile->billTo->company;
+  $order->billing_street1 = (string)$response->paymentProfile->billTo->address;
+  $order->billing_city = (string)$response->paymentProfile->billTo->city;
+  $order->billing_postal_code = (string)$response->paymentProfile->billTo->zip;
+  $country = db_result(db_query("SELECT country_id FROM {uc_countries} WHERE country_name LIKE '%s'", (string) $response->paymentProfile->billTo->country));
+  if ($country) {
+    $state_id = db_result(db_query("SELECT zone_id FROM {uc_zones} WHERE zone_code = '%s' AND zone_country_id=%d", (string) $response->paymentProfile->billTo->state, $country));
+    $order->billing_zone = $state_id;
+  }
+  $order->billing_country = $country;
+  $order->billing_phone = (string)$response->paymentProfile->billTo->phoneNumber;
+
+  //Get the credit card form
+  $credit_form['credit_card'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Credit card'),
+    '#attributes' => array('id' => 'credit-card'),
+  );
+  $credit_form['credit_card'] = array_merge($credit_form['credit_card'], uc_payment_method_credit_form(array(), $order));
+
+  //Get the billing address form
+  $pane = uc_checkout_pane_billing('view', $order, NULL);
+  unset($pane['contents']['copy_address']);
+  $pane['contents']['billing_address_select'] = uc_select_address($user_id, 'billing', "uc_cim_apply_address('billing', this.value);", $title = NULL, $icon_suffix = FALSE);
+  $pane_holder['billing-pane'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Billing address'),
+    '#attributes' => array('id' => 'billing-pane'),
+    '#theme' => $pane['theme'],
+  );
+  $address_form['billing-pane'] = array_merge($pane_holder['billing-pane'], $pane['contents']);
+
+  //Merge the forms and add some hidden feilds to carry our profile id's
+  $form = array_merge($credit_form, $address_form);
+  $form['profile_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $profile_id,
+  );
+  $form['payment_profile_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $payment_profile_id,
+  );
+
+  //Add a submit button
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Submit Changes'),
+  );
+
+  //Delete button
+  $form['delete'] = array(
+    '#type' => 'submit',
+    '#value' => t('Delete Credit Card'),
+    '#title' => t('Remove this credit card from you account.'),
+    '#attributes' => array('class' => 'negative'),
+  );
+
+  //Cancel button - link that returns to where you came from
+  $form['cancel'] = array(
+    '#value' => l('Cancel', $_GET['dest'], array('attributes' => array('class' => 'button negative'))),
+  );
+
+  //Add the javascript and css
+  drupal_add_js(drupal_get_path('module', 'uc_cim') .'/uc_cim.js');
+  //drupal_add_js(drupal_get_path('module', 'uc_payment') .'/uc_payment.js');
+  drupal_add_css(drupal_get_path('module', 'uc_cart') .'/uc_cart.css');
+
+  return $form;
+}
+
+function theme_uc_cim_edit_card_form($form) {
+  //Prep the credit card portion of the form for themeing and then call the special theme function, then render the form
+  $form['credit_card']['cc_policy']['#value'] = '';
+  $form['credit_card']['cc_number']['#title'] = '';
+  $form['credit_card']['cc_exp_month']['#title'] = '';
+  $form['credit_card']['cc_exp_year']['#title'] = '';
+  $form['credit_card']['#theme'] = 'uc_cim_credit_form';
+  $output .= drupal_render($form['credit_card']);
+
+  //Display rest of form
+  $output .= drupal_render($form);
+  return $output;
+}
+
+function theme_uc_cim_credit_form($form) {
+  $path = base_path() . drupal_get_path('module', 'uc_credit');
+  $output .= '<table class="inline-pane-table" cellpadding="2">';
+  /* if (strlen($form['cc_policy']) > 0) {
+    $output .= '<tr><td colspan="2">'. variable_get('uc_credit_policy', '')
+              .'</td></tr>';
+  }*/
+  if (variable_get('uc_credit_type_enabled', FALSE)) {
+    $form['cc_type']['#title'] = '';
+    $output .= '<tr><td class="field-label">'. t('Card Type:') .'</td><td>'
+             . drupal_render($form['cc_type']) .'</td></tr>';
+  }
+  if (variable_get('uc_credit_owner_enabled', TRUE)) {
+    $form['cc_owner']['#title'] = '';
+    $output .= '<tr><td class="field-label">'. t('Card Owner:') .'</td><td>'
+             . drupal_render($form['cc_owner']) .'</td></tr>';
+  }
+  $output .= '<tr><td class="field-label">'. t('Card Number:') .'</td><td>'
+           . drupal_render($form['cc_number']) .'</td></tr>';
+  $output .= '<tr><td class="field-label">'. t('Expiration Date:') .'</td><td>'
+           . drupal_render($form['cc_exp_month']) .' '
+           . drupal_render($form['cc_exp_year']) .'</td></tr>';
+  if (variable_get('uc_credit_cvv_enabled', TRUE)) {
+    drupal_add_js(drupal_get_path('module', 'uc_payment') .'/uc_payment.js');
+    $form['cc_cvv']['#title'] = '';
+    if (  $form['cc_cvv']['#required']) {
+      $sRequired = '<span class="form-required">*</span>';
+    }
+    $output .= '<tr><td class="field-label">'. $sRequired . t('CVV:') .'</td><td>'. drupal_render($form['cc_cvv'])
+              .' <img src="'. $path .'/images/info.png" onclick="cvv_info_popup();" style="cursor: pointer; position: relative; top: 3px;"> <a style="cursor: pointer; font-weight: normal;" onclick="cvv_info_popup();">'
+              . t("What's the CVV?") .'</a></td></tr>';
+  }
+  if (variable_get('uc_credit_bank_enabled', FALSE)) {
+    $form['cc_bank']['#title'] = '';
+    $output .= '<tr><td class="field-label">'. t('Issuing Bank:') .'</td><td>'
+             . drupal_render($form['cc_bank']) .'</td></tr>';
+  }
+  $output .= '</table>';
+
+  return $output;
+}
+
+function uc_cim_edit_card_form_validate($form, &$form_state) {
+  $formvalues = $form_state['values'];
+  //No validation for deleting...
+  if ($_POST['op'] == t('Delete Credit Card')) {
+    return;
+  }
+
+  //Dont attempt to validate credit cards with masked values (for when a customer is updating through user account interface)
+  if (stristr($formvalues['cc_number'], 'XXXX')) {
+    return;
+  }
+  $form_state['values']['cc_number'] = str_replace( ' ', '', trim( $form_state['values']['cc_number'] ) );
+  if (!_valid_card_number($form_state['values']['cc_number'])) {
+    form_set_error('cc_number', t('The credit card number is not valid.'));
+  }
+}
+
+function uc_cim_edit_card_form_submit(&$form, &$form_state) {
+  $formvalues = $form_state['values'];
+  //If the user pressed delete, remove the card from Auth.net and database
+  if ($_POST['op'] == t('Delete Credit Card')) {
+    $response = delete_customer_payment_profile_request($formvalues['profile_id'], $formvalues['payment_profile_id']);
+    $form_state['redirect'] = $_GET['dest'];
+    return;
+  }
+
+  //Create an object in the "order format" to pass to the create_payment_profile api.
+  uc_cim_create_order_object($order, $formvalues);
+
+  //Update payment profile
+  if (is_numeric($formvalues['payment_profile_id'])) {
+    $response = update_customer_payment_profile_request($formvalues['profile_id'], $order, $formvalues['payment_profile_id']);
+  }
+
+  //Or create a new payment profile
+  else {
+    $response = create_customer_payment_profile_request($formvalues['profile_id'], $order, $formvalues['payment_profile_id']);
+  }
+
+  //Process the response
+  if ($response->messages->message->code != 'I00001') {
+    drupal_set_message(t('There was an error processing your request. Pleast contact customer support for assistance'), 'error');
+    watchdog('uc_cim', 'Error edit credit card information for profile id '. $formvalues['profile_id'] .': '. $response->messages->message->text, array(), WATCHDOG_ERROR);
+  }
+  else {
+    drupal_set_message('Billing information successfully updated.');
+  }
+
+  $form_state['redirect'] = $_GET['dest'];
+}
+
+//Refund payments
+function uc_cim_refund_form(&$form_state, $order_id, $receipt_id) {
+
+  //How much to refund?
+  $order = uc_order_load($order_id);
+  if ($order === FALSE) {
+    drupal_set_message(t('Order %id does not exist.', array('%id' => $order_id)));
+    drupal_goto('admin/store/orders');
+  }
+  $payment = uc_payment_load($receipt_id);
+
+  $form['order_total'] = array('#value' => uc_currency_format($order->order_total));
+  $form['payment'] = array('#value' => uc_currency_format($payment->amount));
+
+  $form['amount']  = array(
+    '#type' => 'textfield',
+    '#title' => t('Amount'),
+    '#size' => 7,
+    '#required' => TRUE,
+    '#description' => t('The amount to be refunded (must be a positive number)'),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Process Refund',
+  );
+
+  $form['cancel'] = array(
+    '#value' => l('cancel', 'admin/store/orders/'. $order_id .'/payments/'),
+  );
+
+  $form['receipt_id'] = array(
+    '#type' => 'hidden',
+    '#value' => $receipt_id,
+  );
+
+  return $form;
+
+}
+
+function theme_uc_cim_refund_form($form) {
+  $output .= '<p><strong>'. t('Order total:') .'</strong> '. drupal_render($form['order_total'])
+           .'<br /><strong>'. t('Payment Received:') .'</strong> '
+          . drupal_render($form['payment']) .'</p>';
+  $output .= '<p>Enter the amount you would like to refund from this payment received. The refund amount cannot be greater than the payment itself less any previous refunds. To attempt to void the entire transaction, enter the full payment amount. Note: refunds cannot be made on payments older than 120 days.</p>';
+  $output .= '<div>'. drupal_render($form) .'</div>';
+  return $output;
+}
+
+function uc_cim_refund_form_validate($form, &$form_state) {
+  $formvalues = $form_state['values'];
+  if (!is_numeric($formvalues['amount']) || $formvalues['amount'] < 0 ) {
+    form_set_error('amount', t('You must enter a postive number for the amount.'));
+  }
+  return TRUE;
+}
+
+function uc_cim_refund_form_submit($form, &$form_state) {
+  $formvalues = $form_state['values'];
+  global $user; //For payment comment, NOT refund submission
+
+  //Get the payment receipt data - including the transaction id stored in the serialized data table
+  $payment = uc_payment_load($formvalues['receipt_id']);
+  $data = unserialize($payment->data);
+
+  //If the amount is for the total, try to void the transaction first
+  if ($formvalues['amount'] == $payment->amount) {
+    $result = uc_cim_refund($payment->order_id, $data['transaction_id'], $data['last_four'], $formvalues['amount'], 'VOID');
+  }
+
+  //Otherwise (or if that failed), try to process a refund
+  if ($formvalues['amount'] != $payment->amount || $result['success'] == FALSE) {
+    $result = uc_cim_refund($payment->order_id, $data['transaction_id'], $data['last_four'], $formvalues['amount']);
+  }
+
+  //Record the refund in the payments table, display the result to the admin, and save the comment
+  if ($result['success'] === TRUE) {
+    uc_payment_enter($payment->order_id, 'Credit Card', -1 * $formvalues['amount'], $user->uid, '', 'REFUND processed');
+  }
+  drupal_set_message($result['message']);
+  uc_order_comment_save($order_id, $user->uid, $message, 'admin');
+
+  $form_state['redirect'] = 'admin/store/orders/'. $payment->order_id .'/payments/';
+}
+
+function uc_payment_method_cim($op, &$arg1, $silent = FALSE) {
+  switch ($op) {
+    //Called when you click the radio for this option in the payment method pane
+    case 'cart-details':
+      global $user;
+      $return = uc_checkout_pane_cim('view', $arg1, NULL);
+      $description = '<div class="cim-description">'. $return['description'] .'</div>';
+      $output = $description . drupal_get_form('uc_cim_credit_card_form_drupal', $user->uid, $arg1);
+      return uc_strip_form($output);
+    break;
+
+    case 'cart-process' :
+      //here we have to fake the existance of $arg2 by extracting variables from the $_POST array
+      //This allows our functions down the line to validate the properly organized form data
+      $arg2 = array();
+      foreach ($_POST as $key => $value) {
+        if (  substr($key, 0, 3) == 'cc_') {
+          $arg2['credit_card'][$key] = $value;
+        }
+        elseif (  substr($key, 0, 8) == 'billing_') {
+          $arg2['billing_address'][$key] = $value;
+        }
+        else {
+          $arg2[$key] = $value;
+        }
+      }
+      return uc_checkout_pane_cim('process', $arg1, $arg2);
+    break;
+
+    case 'cart-review' :
+      return uc_checkout_pane_cim('review', $arg1, NULL);
+    break;
+  }
+}
+
+/**
+ * Proxy form function so drupal_get_form can be used and func signature is compatible with FAPI
+ */
+function uc_cim_credit_card_form_drupal(&$form_state, $uid, $arg1) {
+  return uc_cim_credit_card_form($uid, $arg1, 'billing');
+}
+
+function uc_checkout_pane_cim_functionality($op, &$arg1, $arg2) {
+  switch ($op) {
+    case 'view':
+    case 'process':
+    case 'review':
+      //Add our css and revised javascript for copying addresses to our revised address form
+      drupal_add_js(drupal_get_path('module', 'uc_cim') .'/uc_cim.js');
+      drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
+      drupal_add_css(drupal_get_path('module', 'uc_cart') .'/uc_cart.css'); //For pages where the form is used not on the checkout screen, we still need that cart styling...
+    break;
+  }
+}
+/**
+ * Callback function for setting up a recurring fee
+ */
+function uc_recurring_cim_fee($order, &$fee) {
+  // Get a default SKU if none was supplied.
+  if (empty($fee->model)) {
+    $fee->model = db_result(db_query("SELECT model FROM {uc_products} WHERE nid = %d", $fee->nid));
+  }
+
+  $data = array(
+    'cim_ppid' => $order->cim_ppid,
+    'model' => $fee->model,
+  );
+
+  // need to set gateway specific fee information for renewals
+  $fee->fee_handler = 'uc_cim';
+  $fee->data = $data;
+
+  return TRUE;
+}
+
+/**
+ * Callback to process a recurring renewal
+ */
+function uc_recurring_uc_cim_renew($order, $fee) {
+  // check that payment profile still exists first
+  $profile_id = uc_cim_get_profile_id($order->uid);
+  if ($profile_id) {
+    $ppid = uc_cim_get_payment_profiles($profile_id, $order->cim_ppid);
+  }
+
+  if ($ppid) {
+    // Run the charge.
+    $result = uc_cim_charge($order, $fee['fee_amount'], $data = NULL, $update_cim_order_table = TRUE);
+    // expose a hook that allows other modules to record/act on the responses
+    // hook_gateway_renew_response($gateway_module, $order, $gateway_response, $bank_response);
+    module_invoke_all('gateway_renew_response', 'uc_cim', $order, $result['gateway_message'], $result['bank_message']);
+  }
+  else {
+    watchdog('uc_cim', 'Order !order does not have a valid payment profile (!ppid) associated with it.', array('!ppid' => $order->cim_ppid, '!order' => $order->order_id), WATCHDOG_ERROR, l(t('Order #!order', array('!order' => $order->order_id)), 'admin/store/orders/'. $order->order_id));
+
+    uc_order_comment_save($order->order_id, 0, t('Order does not have a valid payment profile (!ppid) for customer !profile_id associated with it.', array('!ppid' => $order->cim_ppid, '!profile_id' => l((int)$profile_id, 'admin/store/customers/cim/'. (int)$profile_id))));
+
+    $message = t('Order !order does not have a valid payment profile (!ppid) associated with it.', array('!order' => $order->order_id, '!ppid' => $order->cim_ppid));
+    $result = array(
+      'success' => FALSE,
+      'comment' => $message,
+      'message' => $message,
+      'uid' => 0,
+      'gateway_message' => t('Invalid payment profile.'),
+    );
+    // expose a hook that allows other modules to record/act on the responses
+    module_invoke_all('gateway_renew_response', 'uc_cim', $order, $result['gateway_message'], $result['bank_message']);
+  }
+
+  // Handle the result.
+  if ($result['success'] === TRUE) {
+    // expose a hook that allows other modules to record/act on the responses
+    module_invoke_all('gateway_renew_response', 'uc_cim', $order, $result['gateway_message'], $result['bank_message']);
+    uc_payment_enter($fee['order_id'], 'credit', $fee['fee_amount'], 0, $result['data'], t('Recurring fee payment.') .'<br />'. $result['comment']);
+  }
+  else {
+    // expose a hook that allows other modules to record/act on the responses
+    module_invoke_all('gateway_renew_response', 'uc_cim', $order, $result['gateway_message'], $result['bank_message']);
+
+    // notify customer and/or admin
+    $params = array(
+      'order_id' => $fee['order_id'],
+      'account' => $account,
+      'amount' => $fee['fee_amount'],
+      'message' => $result['message'],
+    );
+
+    // customer notification
+    if (variable_get('uc_cim_send_recurring_error_notifications', 1)) {
+      $account = user_load(array('uid' => $order->uid));
+      $to = $account->mail;
+      drupal_mail('uc_cim', 'recurring_fail_customer', $to, language_default(), $params, NULL, TRUE);
+    }
+    // admin notification
+    if (variable_get('uc_cim_send_admin_recurring_error_notifications', 1)) {
+      $admin_account = user_load(array('uid' => 1));
+      $to = variable_get('uc_cim_recurring_error_notifications_to', $admin_account->mail);
+      drupal_mail('uc_cim', 'recurring_fail_admin', $to, language_default(), $params, NULL, TRUE);
+    }
+
+    // mark failed order as failed and store its info
+    uc_order_update_status($order->order_id, 'failed');
+    $order->order_status = 'failed';
+    uc_order_save($order);
+    uc_order_comment_save($order->order_id, 0, $result['message']);
+    //uc_order_comment_save($order->order_id, 0, t('!amount recurring fee failed. (ID: <a href="!url">!fee</a>)', array('!url' => url('admin/store/orders/recurring/view/fee/'. $fee['rfid']), '!fee' => $fee['rfid'], '!amount' => uc_currency_format($fee['fee_amount']))));
+
+  }
+
+  return $result['success'];
+}
+
+/**
+ * Callback for uc_recurring_fee_ops().
+ */
+function uc_recurring_uc_cim_fee_ops($context, $fee) {
+  $ops = array();
+
+  switch ($context) {
+    case 'fee_admin':
+      if ($fee['remaining_intervals'] > 0) {
+        $ops[] = l(t('edit'), 'admin/store/orders/recurring/'. $fee['rfid'] .'/edit');
+        $ops[] = l(t('cancel'), 'admin/store/orders/recurring/'. $fee['rfid'] .'/cancel');
+      }
+      else {
+        $ops[] = l(t('delete'), 'admin/store/orders/recurring/'. $fee['rfid'] .'/delete');
+      }
+      break;
+    case 'user':
+      $ops[] = l(t('Cancel'), 'user/'. $fee['uid'] .'/recurring/'. $fee['rfid'] .'/cancel');
+      break;
+  }
+
+  return $ops;
+}
+
+/**
+ * Access callback for credit card management.
+ */
+function uc_cim_manage_cards_access($account) {
+  return (($GLOBALS['user']->uid == $account->uid) || user_access('administer credit cards')) && $account->uid > 0;
+}
+
+/* END Callbacks */
+
+
+/* ******************************************************************************
+ * CIM API
+ *
+ * An API to create customer profiles, customer payment profiles, and transactions
+ * for the Authorize.net CIM gateway.
+ * *****************************************************************************/
+function create_customer_profile_request($user_id) {
+  //Load user
+  $user = user_load(array('uid' => $user_id));
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<createCustomerProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<profile>'.
+    '<merchantCustomerId>'. uc_cim_xml_clean($user->uid) .'</merchantCustomerId>'.
+    '<description>'. uc_cim_xml_clean($user->name) .'</description>'.
+    '<email>'. uc_cim_xml_clean($user->mail) .'</email>'.
+  '</profile>'.
+  '</createCustomerProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  //Process the response
+  if ($profile_id = $response->customerProfileId) {
+    uc_cim_save_profile_id($user_id, $profile_id);
+  }
+  else {
+    $message = 'Customer profile could not be created. User: '. $user_id .', Error: '. $response->messages->message->text;
+    watchdog('uc_cim', $message, array(), WATCHDOG_WARNING);
+  }
+
+  return $response;
+}
+
+function create_customer_payment_profile_request($profile_id, $order) {
+
+  //Validate this payment profile in live mode for production sites.  This performs stronger card validation, but fails for test transactions.
+  if (variable_get('cim_transaction_mode', 'test') == 'production') {
+    $validation_mode = '<validationMode>liveMode</validationMode>';
+  }
+  else {
+    $validation_mode = '<validationMode>testMode</validationMode>';
+  }
+
+  //Make expiration date month 2 digits
+  if (strlen($order->payment_details['cc_exp_month']) == 1) {
+    $order->payment_details['cc_exp_month'] = '0'. $order->payment_details['cc_exp_month'];
+  }
+
+  //Get Country
+  $country = uc_get_country_data(array('country_id' => $order->billing_country));
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<createCustomerPaymentProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '<paymentProfile>'.
+    '<billTo>'.
+      //'<address>'. CIM DOCUMENTATION SAYS THIS IS NEEDED, but appears to by an error
+      '<firstName>'. uc_cim_xml_clean($order->billing_first_name) .'</firstName>'.
+      '<lastName>'. uc_cim_xml_clean($order->billing_last_name) .'</lastName>'.
+      '<company>'. uc_cim_xml_clean($order->billing_company) .'</company>'.
+      '<address>'. uc_cim_xml_clean($order->billing_street1) .'</address>'.
+      '<city>'. uc_cim_xml_clean($order->billing_city) .'</city>'.
+      '<state>'. uc_cim_xml_clean(uc_get_zone_code($order->billing_zone)) .'</state>'.
+      '<zip>'. uc_cim_xml_clean($order->billing_postal_code) .'</zip>'.
+      '<country>'. uc_cim_xml_clean($country[0]['country_name']) .'</country>'.
+      //'</address>'.
+      '<phoneNumber>'. uc_cim_xml_clean($order->billing_phone) .'</phoneNumber>'.
+    '</billTo>'.
+    '<payment>'.
+      '<creditCard>'.
+        '<cardNumber>'. uc_cim_xml_clean($order->payment_details['cc_number']) .'</cardNumber>'.
+        '<expirationDate>'. uc_cim_xml_clean($order->payment_details['cc_exp_year'] .'-'. $order->payment_details['cc_exp_month']) .'</expirationDate>'. //example: 2008-10
+      '</creditCard>'.
+    '</payment>'.
+  '</paymentProfile>'.
+  $validation_mode .
+  '</createCustomerPaymentProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  //Process the response and save the profile
+  $last_four = substr($order->payment_details['cc_number'], -4);
+
+  if ($payment_profile_id = $response->customerPaymentProfileId) {
+    //Get the payment profile id from the response and save it
+    uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $order->payment_details['cc_type'], $order->payment_details['cc_exp_year'], $order->payment_details['cc_exp_month']);
+  }
+  else {
+    //If that didn't work, we've got a problem...
+    $message = 'Customer payment profile could not be created. User: '. $order->uid .', Error: '. $response->messages->message->text;
+    watchdog('uc_cim', $message, array(), WATCHDOG_WARNING);
+  }
+
+  return $response;
+}
+
+function update_customer_payment_profile_request($profile_id, $order, $payment_profile_id) {
+
+  //Make expiration date month 2 digits
+  if (strlen($order->payment_details['cc_exp_month']) == 1) {
+    $order->payment_details['cc_exp_month'] = '0'. $order->payment_details['cc_exp_month'];
+  }
+
+  //Get Country
+  $country = uc_get_country_data(array('country_id' => $order->billing_country));
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<updateCustomerPaymentProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '<paymentProfile>'.
+    '<billTo>'.
+      //'<address>'. CIM DOCUMENTATION SAYS THIS IS NEEDED, but appears to by an error
+      '<firstName>'. uc_cim_xml_clean($order->billing_first_name) .'</firstName>'.
+      '<lastName>'. uc_cim_xml_clean($order->billing_last_name) .'</lastName>'.
+      '<company>'. uc_cim_xml_clean($order->billing_company) .'</company>'.
+      '<address>'. uc_cim_xml_clean($order->billing_street1) .'</address>'.
+      '<city>'. uc_cim_xml_clean($order->billing_city) .'</city>'.
+      '<state>'. uc_cim_xml_clean(uc_get_zone_code($order->billing_zone)) .'</state>'.
+      '<zip>'. uc_cim_xml_clean($order->billing_postal_code) .'</zip>'.
+      '<country>'. uc_cim_xml_clean($country[0]['country_name']) .'</country>'.
+      //'</address>'.
+      '<phoneNumber>'. uc_cim_xml_clean($order->billing_phone) .'</phoneNumber>'.
+    '</billTo>'.
+     '<payment>'.
+      '<creditCard>'.
+        '<cardNumber>'. uc_cim_xml_clean($order->payment_details['cc_number']) .'</cardNumber>'.
+        '<expirationDate>'. uc_cim_xml_clean($order->payment_details['cc_exp_year'] .'-'. $order->payment_details['cc_exp_month']) .'</expirationDate>'. //example: 2008-10
+      '</creditCard>'.
+    '</payment>'.
+    '<customerPaymentProfileId>'. uc_cim_xml_clean($payment_profile_id) .'</customerPaymentProfileId>'.
+  '</paymentProfile>'.
+  '</updateCustomerPaymentProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  //Process the response and save the profile
+  $last_four = substr($order->payment_details['cc_number'], -4);
+
+  if ($payment_profile_id) {
+    //If we already have the id, just save it
+    uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $order->payment_details['cc_type'], $order->payment_details['cc_exp_year'], $order->payment_details['cc_exp_month']);
+  }
+  elseif ($payment_profile_id = $response->customerPaymentProfileId) {
+    //Otherwise, get the payment profile id from the response and save it
+    uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $order->payment_details['cc_type'], $order->payment_details['cc_exp_year'], $order->payment_details['cc_exp_month']);
+  }
+  else {
+    //If that didn't work, we've got a problem...
+    $message = 'Customer payment profile could not be created. User: '. $order->uid .', Error: '. $response->messages->message->text;
+    watchdog('uc_cim', $message, array(), WATCHDOG_WARNING);
+  }
+
+  return $response;
+}
+
+function create_customer_profile_transaction_request($profile_id, $payment_profile_id, $order, $amount) {
+
+  //Build the order description
+  $description = '';
+  if (is_array($order->products)) {
+    foreach ($order->products as $product) {
+      if (!empty($description)) {
+        $description .= ' / ';
+      }
+      $description .= $product->title .' x'. $product->qty;
+      if (is_array($product->data['attributes'])) {
+        foreach ($product->data['attributes'] as $key => $value) {
+          $description .= ', '. $key .': '. $value;
+        }
+      }
+    }
+  }
+  $description = str_replace(variable_get('cim_delimiter', ','), '', $description);  //Since this is returned in the response, delimitters will cause problems
+  $description = substr($description, 0, 255);
+
+  //Determine whether to add CVV field
+  if (strlen($order->payment_details['cc_cvv']) >= 3 && $order->payment_details['cc_cvv'] != '000') {
+    $cvv = '<cardCode>'. uc_cim_xml_clean($order->payment_details['cc_cvv']) .'</cardCode>';
+  }
+  else $cvv = '';
+
+  //Determine whether to add a recurring flag
+  //<recurringBilling>". $this->params['transactionRecurringBilling'] ."</recurringBilling>
+  /* if (strlen($order->payment_details['cc_cvv']) >= 3) {
+    $cvv = '<cardCode>'. $order->payment_details['cc_cvv']. '</cardCode>';
+  }
+  else $cvv = ''; */
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<createCustomerProfileTransactionRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<transaction>'.
+    '<profileTransAuthCapture>'.
+      '<amount>'. uc_cim_xml_clean($amount) .'</amount>'.
+      '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+      '<customerPaymentProfileId>'. uc_cim_xml_clean($payment_profile_id) .'</customerPaymentProfileId>'.
+      '<order>'.
+        '<invoiceNumber>'. uc_cim_xml_clean($order->order_id) .'</invoiceNumber>'.
+        '<description>'. uc_cim_xml_clean($description) .'</description>'.
+      '</order>'.
+      $recurring .
+      $cvv .
+    '</profileTransAuthCapture>'.
+  '</transaction>'.
+
+  '</createCustomerProfileTransactionRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  //Process the response later
+
+  return $response;
+}
+
+function delete_customer_profile_request($profile_id) {
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<deleteCustomerProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '</deleteCustomerProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  return $response;
+}
+
+function delete_customer_payment_profile_request($profile_id, $payment_profile_id) {
+  // TODO: should check here if any recurring fees are using this payment profile?
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<deleteCustomerPaymentProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '<customerPaymentProfileId>'. uc_cim_xml_clean($payment_profile_id) .'</customerPaymentProfileId>'.
+  '</deleteCustomerPaymentProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  //Process the response
+  if ($response->messages->message->code != 'I00001') {
+    drupal_set_message(t('There was an error processing your request. Pleast contact customer support for assistance'), 'error');
+    watchdog('uc_cim', 'CIM payment profile delete error for profile id '. $profile_id .': '. $response->messages->message->text, array(), WATCHDOG_ERROR);
+  }
+  else {
+    uc_cim_delete_payment_profile($profile_id, $payment_profile_id);
+    drupal_set_message(t('Your credit card information has been removed.'));
+  }
+
+  return $response;
+}
+
+
+function get_customer_profile_request($profile_id) {
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<getCustomerProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '</getCustomerProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  return $response;
+}
+
+function get_customer_payment_profile_request($profile_id, $payment_profile_id) {
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<getCustomerPaymentProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '<customerPaymentProfileId>'. uc_cim_xml_clean($payment_profile_id) .'</customerPaymentProfileId>'.
+  '</getCustomerPaymentProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  return $response;
+}
+
+function validate_customer_payment_profile_request($profile_id, $payment_profile_id) {
+
+  //Validate this payment profile in live mode for production sites.  This performs stronger card validation, but fails for test transactions.
+  if (variable_get('cim_transaction_mode', 'test') == 'production') {
+    $validation_mode = '<validationMode>liveMode</validationMode>';
+  }
+  else {
+    $validation_mode = '<validationMode>testMode</validationMode>';
+  }
+
+  //Build XML to post
+  $content =
+  '<?xml version="1.0" encoding="utf-8"?>'.
+  '<validateCustomerPaymentProfileRequest xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd">'.
+  merchant_auth_xml() .
+  '<customerProfileId>'. uc_cim_xml_clean($profile_id) .'</customerProfileId>'.
+  '<customerPaymentProfileId>'. uc_cim_xml_clean($payment_profile_id) .'</customerPaymentProfileId>'.
+  $validation_mode .
+  '</validateCustomerPaymentProfileRequest>';
+
+  //Send the XML via curl
+  $response = uc_cim_curl_send($content);
+
+  return $response;
+
+}
+function uc_cim_refund($order_id, $transaction_id, $last_four, $amount, $type = 'CREDIT') {
+  global $user; //For order comment saving, NOT processing (use order->uid for that)
+
+  //Are we in test mode?
+  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+    $test = '_TEST';
+    $submit_data['x_test_request'] = 'TRUE';
+    $url = 'https://test.authorize.net/gateway/transact.dll';
+  }
+  else {
+    $test = '';
+    $submit_data['x_test_request'] = 'FALSE';
+    $url = 'https://secure.authorize.net/gateway/transact.dll';
+  }
+
+  //Setup the variables we're sending
+  $submit_data = array(
+    'x_version' => '3.1',
+    'x_delim_data' => 'TRUE',
+    'x_relay_response' => 'FALSE',
+    'x_login' => variable_get('cim_login_id'. $test, ''),
+    'x_tran_key' => variable_get('cim_transaction_key'. $test, ''),
+    'x_amount' => uc_currency_format($amount, FALSE, FALSE, '.'),
+    'x_card_num' => $last_four,
+    //'x_exp_date' => $order->payment_details['cc_exp_month'] .'/'. $order->payment_details['cc_exp_year'],
+    'x_type' => $type,
+    'x_method' => 'CC',
+    'x_trans_id' => $transaction_id,
+  );
+
+  while (list($key, $value) = each($submit_data)) {
+    $data .= $key .'='. urlencode(ereg_replace(',', '', $value)) .'&';
+  }
+
+  $data = substr($data, 0, -1);
+
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, $url);
+  curl_setopt($ch, CURLOPT_VERBOSE, 0);
+  curl_setopt($ch, CURLOPT_POST, 1);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+  curl_setopt($ch, CURLOPT_NOPROGRESS, 1);
+  curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 0);
+  $authorize = curl_exec($ch);
+  curl_close($ch);
+
+  //Process the response
+  $response = explode(variable_get('cim_delimiter', ','), $authorize);
+  $response_code = $response[0];
+  $response_text = $response[3];
+  $approval_code = $response[4];
+
+  if ($response_code != 1) {
+    $message = t('Refund declined: !amount', array('!amount' => uc_currency_format($amount)));
+    $result = array(
+      'success' => FALSE,
+      'comment' => t('Credit card refund declined: !text', array('!text' => $response_text)),
+      'message' => t('Credit card refund declined: !text', array('!text' => $response_text)),
+      'uid' => $user->uid,
+    );
+  }
+  else {
+    $message = t('Credit card refund successful: !amount', array('!amount' => uc_currency_format($amount)));
+    $result = array(
+      'success' => TRUE,
+      'comment' => t('Credit card refund processed successfully. Approval code: !code', array('!code' => $approval_code)),
+      'message' => t('Credit card refund processed successfully. Approval code: !code', array('!code' => $approval_code)),
+      'uid' => $user->uid,
+    );
+  }
+
+  //Save a watchdog warning message
+  watchdog('uc_cim', $message, array(), WATCHDOG_WARNING);
+
+  return $result;
+}
+/* END CIM API */
+
+
+/* ******************************************************************************
+ * Helper Functions
+ * *****************************************************************************/
+function uc_cim_save_profile_id($user_id, $profile_id) {
+  //The table to update depends on test mode or production mode - get the right one
+  $table = uc_cim_table('uc_cim');
+
+  //Save the profile
+  $sql = "INSERT INTO {". $table ."} (uid, customer_profile_id) VALUES (%d, %d)";
+  db_query($sql, $user_id, $profile_id);
+  if (db_affected_rows() == 0) {
+    watchdog('uc_cim', 'Could not save customer profile id to database for user '. $user_id, array(), WATCHDOG_ERROR);
+  }
+}
+
+function uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $type = NULL, $exp_year = NULL, $exp_month = NULL) {
+  //The table to update depends on test mode or production mode - get the right one
+  $table = uc_cim_table('uc_cim_payment_profiles');
+
+  //First try updating
+  $sql = "UPDATE {". $table ."} SET last_four = '%s', cc_type = '%s', cc_exp_year = '%s', cc_exp_month = '%s', exp_notification = NULL WHERE customer_profile_id = %d AND customer_payment_profile_id = %d";
+  db_query($sql, $last_four, $type, $exp_year, $exp_month, $profile_id, $payment_profile_id);
+
+  //Otherwise, insert a new row.
+  if (db_affected_rows() == 0) {
+    $sql = "INSERT INTO {". $table ."} (customer_profile_id, customer_payment_profile_id, last_four, cc_type, cc_exp_year, cc_exp_month) VALUES (%d, %d, '%s', '%s', '%s', '%s')";
+    db_query($sql, $profile_id, $payment_profile_id, $last_four, $type, $exp_year, $exp_month);
+  }
+}
+
+function uc_cim_get_profile_id($user_id) {
+  //The table to get from depends on test mode or production mode - get the right one
+  $table = uc_cim_table('uc_cim');
+
+   //Get profile ID based on UID
+  $sql = "SELECT customer_profile_id FROM {". $table ."} WHERE uid = %d";
+  $result = db_query($sql, $user_id);
+  $profile_id = db_result($result);
+  return $profile_id;
+}
+
+function uc_cim_get_payment_profiles($profile_id, $payment_profile_id = NULL) {
+   //The table to get from depends on test mode or production mode - get the right one
+  $table = uc_cim_table('uc_cim_payment_profiles');
+
+  //If a payment profile id was passed, get that one
+  if (is_numeric($payment_profile_id)) {
+    $sql = "SELECT * FROM {". $table ."} WHERE customer_profile_id = %d AND customer_payment_profile_id = %d";
+    $result = db_query($sql, $profile_id, $payment_profile_id);
+    while ($getdata = db_fetch_array($result)) {
+      $payment_profiles[] = $getdata;
+    }
+    return $payment_profiles[0];
+  }
+
+  //Otherwise, get all profiles for a given user
+  else {
+    $sql = "SELECT * FROM {". $table ."} WHERE customer_profile_id = %d";
+    $result = db_query($sql, $profile_id);
+    while ($getdata = db_fetch_array($result)) {
+      $payment_profiles[] = $getdata;
+    }
+    return $payment_profiles;
+  }
+}
+
+function uc_cim_delete_profile($profile_id) {
+  $response = delete_customer_profile_request($profile_id);
+
+  //The table to update depends on test mode or production mode - get the right one
+  $table = uc_cim_table('uc_cim_payment_profiles');
+
+  //Delete
+  $sql = "DELETE FROM {". $table ."} WHERE customer_profile_id = %d";
+  db_query($sql, $profile_id);
+
+  $table = uc_cim_table('uc_cim');
+  $sql = "DELETE FROM {". $table ."} WHERE customer_profile_id = %d";
+  db_query($sql, $profile_id);
+  if ($response->messages->message->code == 'I00001') {
+    drupal_set_message('The profile was successfully deleted');
+  }
+  else {
+    drupal_set_message('The profile was deleted from the local database, but errors were encountered through authorize.net: '. $response->messages->message->text);
+  }
+  drupal_goto('admin/store/customers/cim');
+
+  //@todo should we delete from uc_payment_cim as well?
+}
+
+function uc_cim_delete_payment_profile($profile_id, $payment_profile_id) {
+  //The table to update depends on test mode or production mode - get the right one
+  $table = uc_cim_table('uc_cim_payment_profiles');
+
+  //Delete
+  $sql = "DELETE FROM {". $table ."} WHERE customer_profile_id = %d AND customer_payment_profile_id = %d";
+  db_query($sql, $profile_id, $payment_profile_id);
+}
+
+function uc_cim_curl_send($content) {
+  //Build the path to post to, depending on whether we're in test mode or not
+  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+    $posturl = 'https://apitest.authorize.net/xml/v1/request.api';
+  }
+  else {
+    $posturl = 'https://api.authorize.net/xml/v1/request.api';
+  }
+
+  $ch = curl_init();
+  curl_setopt($ch, CURLOPT_URL, $posturl);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, Array("Content-Type: text/xml"));
+  curl_setopt($ch, CURLOPT_HEADER, 0);  //Set to TRUE to return the header in the output - good for debugging, but messes with xml parsing
+  curl_setopt($ch, CURLOPT_POSTFIELDS, $content);
+  curl_setopt($ch, CURLOPT_POST, 1);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+  curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+
+  $authorize = curl_exec($ch);
+  if ($error = curl_error($ch)) {
+    watchdog('uc_cim', $error, array(), WATCHDOG_ERROR);
+    uc_cim_notify_error('Connection error (cURL)', $error);
+  }
+  else {
+    $response = uc_cim_parse_return($authorize);
+  }
+
+  if (variable_get('cim_logging_level', 'standard') == 'extended') {
+    // log request and response as raw xml
+    $sent_xml = preg_replace('|\<cardNumber\>(.*)\<\/cardNumber\>|', '<cardNumber>[Not logged]</cardNumber>', $content);
+    $sent_xml = preg_replace('|\<cardCode\>(.*)\<\/cardCode\>|', '<cardCode>[Not logged]</cardCode>', $sent_xml);
+    $message = "Request Sent: <br />\n". uc_cim_xml_clean( $sent_xml ) ."\n<br />";
+    $message .= "<br />\nResponse Received: <br />\n". uc_cim_xml_clean( $authorize ) ."\n";
+    watchdog('CIM-ext', $message, array(), WATCHDOG_NOTICE);
+  }
+
+  curl_close($ch);
+  return $response;
+}
+
+function uc_cim_parse_return($response) {
+  $xml_raw = str_replace('xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="AnetApi/xml/v1/schema/AnetApiSchema.xsd"', '', $response);
+  try {
+    $xml_data = new SimpleXMLElement($xml_raw);
+  }
+  catch (Exception $e) {
+    watchdog('uc_cim', $e->getMessage(), array(), WATCHDOG_ERROR);
+    uc_cim_notify_error('Connection error (SimpleXML)', $e->getMessage());
+    $xml_data = NULL;
+  }
+  return $xml_data;
+}
+
+function merchant_auth_xml() {
+  //Get the login info for the mode we're in
+  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+    $loginname = variable_get('cim_login_id_TEST', '');
+    $transactionkey = variable_get('cim_transaction_key_TEST', '');
+  }
+  else {
+    $loginname = variable_get('cim_login_id', '');
+    $transactionkey = variable_get('cim_transaction_key', '');
+  }
+
+  return '<merchantAuthentication><name>'. uc_cim_xml_clean($loginname) .'</name><transactionKey>'. uc_cim_xml_clean($transactionkey) .'</transactionKey></merchantAuthentication>';
+}
+
+function uc_cim_in_stock_amount($arg1) {
+  //Simple fix for now: if "do not process orders with out-of-stock items at checkout" is enabled, return $0
+  if (variable_get('cim_not_process_preorders', FALSE)) {
+    if ($arg1->products) {
+      foreach ($arg1->products as $key => $product) {
+
+        //If stock tracking is enabled for this product, let's check to see if we have enough in stock
+        if (($stock = uc_stock_level($product->model)) !== FALSE) {
+
+          //If there's not enough left, return 0
+          if ( ($stock - $product->qty) < 0) {
+            return 0;
+          }
+        }
+      }
+    }
+  }
+
+  //If no products are out of stock, return the order total
+  return $arg1->order_total;
+
+  //Given an order, determine what's in stock and return the $amount to be charged for those in stock items
+  /* $num_products = 0;
+  $amount = $arg1->order_total;
+  if ($arg1->products) {
+    foreach($arg1->products as $key => $product) {
+
+      $num_products += $product->qty;
+
+      //If stock tracking is enabled for this product, let's check to see if we have enough in stock
+      if (($stock = uc_stock_level($product->model)) !== FALSE) {
+
+        //If there's not enough left, take that product out of this order. (Don't forget about quantity!!)
+        if ( ($stock - $product->qty) < 0) {
+          $num_products -= $product->qty;
+          $amount -= $product->price * $product->qty;
+        }
+      }
+    }
+  }
+
+  //If our amount has gone negative (due to discount modules, etc) or all products are out of stock, charge $0 (ie validate the CC)
+  if ($amount < 0) $amount = 0;
+  if ($num_products <= 0) $amount = 0;
+
+  return $amount; */
+}
+
+function uc_cim_create_order_object(&$order, $formvalues, $lookup_cc = FALSE) {
+  //Adds the new credit card billing info to an order object
+
+  //cc_number is the only tricky one - have to support not losing the credit card # during masking
+  //Use $lookup_cc to make sure we want to get the credit card from the database - good for orders, bad for API calls generally
+  //@TO DO: Get rid of this when uc_payment_credit table is depricated in U2.0
+  if ($lookup_cc == TRUE && substr($formvalues['cc_number'], 0, strlen(t('(Last 4) '))) == t('(Last 4) ')) {
+    //drupal_set_message(uc_cim_printr(uc_credit_cache('save', $_SESSION['sescrd'])));
+    //$result = db_query("SELECT cc_number FROM {uc_payment_credit} WHERE order_id = %d", $order->order_id);
+    /* if ($number = db_result($result)) {
+      $order->payment_details['cc_number'] = $cache['cc_number'];//$number;
+    }
+    else { */
+      //@todo This will prevent query errors when the form is resubmitted, but forces the user re-enter their credit card number if they dont have access to view their own cc numbers
+      //if they failed validation on another field item.  Not sure if this code applies to anywhere other than checkout time, but a secure method
+      //for storing the full CC number could (should?) be utilized
+      $order->payment_details['cc_number'] = '';
+    //}
+  }
+  else {
+    $order->payment_details['cc_number'] = check_plain($formvalues['cc_number']);
+  }
+
+  //Others are straight forward - put the form values in the order object
+  if (isset($formvalues['uid'])) {
+    $order->uid = $formvalues['uid'];
+  }
+  $order->billing_first_name = $formvalues['billing_first_name'];
+  $order->billing_last_name = $formvalues['billing_last_name'];
+  $order->billing_company = $formvalues['billing_company'];
+  $order->billing_street1 = $formvalues['billing_street1'];
+  $order->billing_street2 = $formvalues['billing_street2'];
+  $order->billing_city = $formvalues['billing_city'];
+  $order->billing_zone = $formvalues['billing_zone'];
+  $order->billing_postal_code = $formvalues['billing_postal_code'];
+  $order->billing_country = $formvalues['billing_country'];
+  $order->billing_phone = $formvalues['billing_phone'];
+  $order->payment_details['cc_type'] = check_plain($formvalues['cc_type']);
+  $order->payment_details['cc_owner'] = check_plain($formvalues['cc_owner']);
+  $order->payment_details['cc_exp_month'] = check_plain($formvalues['cc_exp_month']);
+  $order->payment_details['cc_exp_year'] = check_plain($formvalues['cc_exp_year']);
+  $order->payment_details['cc_cvv'] = check_plain($formvalues['cc_cvv']);
+  $order->payment_details['cc_bank'] = check_plain($formvalues['cc_bank']);
+}
+
+function uc_cim_table($base_table_name) {
+  if (variable_get('cim_transaction_mode', 'test') == 'test') {
+    $table = $base_table_name .'_TEST';
+  }
+  else {
+    $table = $base_table_name;
+  }
+  return $table;
+}
+/* END HELPER */
+
+//------------------------------------------------------------------------------
+
+/**
+ * Allow a user to change the payment profile associated with an order
+ * so that future charges will be applied against the new payment profile.
+ */
+function uc_cim_switch_payment_profile_form(&$form_state, $order, $profile = NULL) {
+  $customer_profile_id = uc_cim_get_profile_id($order->uid);
+  $payment_profiles = uc_cim_get_payment_profiles($customer_profile_id);
+
+  if (!is_array($payment_profiles)) {
+    drupal_set_message(t('Please enter a credit card on your !link page.  Then you will be able to select it here to apply it to this order.', array('!link' => l(t('manage credit cards'), 'user/'. $order->uid .'/creditcards'))));
+    return array();
+  }
+
+  $options = array();
+
+  foreach ( $payment_profiles as $payment_profile ) {
+    $options[$payment_profile['customer_payment_profile_id']] = $payment_profile['cc_type'] .': xxxx'. $payment_profile['last_four'] .' (Exp: '. $payment_profile['cc_exp_month'] .'/'. $payment_profile['cc_exp_year'] .')';
+  }
+
+  $form['order_id'] = array(
+    '#type' => 'value',
+    '#value' => $order->order_id,
+  );
+
+  $form['ppid'] = array(
+    '#title' => t('Payment profile'),
+    '#type' => 'select',
+    '#options' => $options,
+    '#description' => t('Select a credit card from those that you have entered at your !link screen.  Future charges will be applied against this card.  This will not affect past charges.', array('!link' => l(t('manage credit cards'), 'user/'. $order->uid .'/creditcards'))),
+  );
+
+  $form['submit_card'] = array(
+    '#type' => 'submit',
+    '#value' => t('Use this card for future charges'),
+  );
+  return $form;
+}
+
+/**
+ * User has requested a change to which card is being charged for an order.
+ * Update the order to reflect that request.
+ */
+function uc_cim_switch_payment_profile_form_submit(&$form, &$form_state) {
+  $order_id = $form_state['values']['order_id'];
+  $ppid = $form_state['values']['ppid'];
+  $order = uc_order_load( $order_id );
+  $customer = user_load( array( 'uid' => $order->uid ) );
+  $customer_profile_id = uc_cim_get_profile_id($order->uid);
+  $payment_profile = uc_cim_get_payment_profiles($customer_profile_id, $ppid);
+  if ($payment_profile) {
+    $previous = $order->cim_ppid;
+    if ($previous != $payment_profile['customer_payment_profile_id']) {
+      $order->cim_ppid = $order->data['cim_ppid'] = $payment_profile['customer_payment_profile_id'];
+      if (!isset($order->data['previous_ppid'])) {
+        $order->data['previous_ppid'] = array();
+      }
+      $order->data['previous_ppid'][time()] = $previous;
+      // update billing address
+      uc_cim_update_order_billing_address($order);
+      uc_order_save($order);
+      uc_order_log_changes($order->order_id, array('Payment profile' => array('old' => $previous, 'new' => $order->cim_ppid)));
+
+      db_query("UPDATE {uc_payment_cim} SET cim_ppid = %d WHERE order_id = %d", $order->cim_ppid, $order->order_id);
+      if (db_affected_rows() == 0) {
+        db_query("INSERT INTO {uc_payment_cim} (order_id, cim_ppid) VALUES (%d, %d)", $order->order_id, $order->cim_ppid);
+      }
+
+      drupal_set_message(t('Payment updated.'));
+    }
+    else {
+      drupal_set_message(t('No change to payment.'));
+    }
+  }
+  else {
+    drupal_set_message(t('Error assigning new payment profile.  The selected payment profile could not be matched to the customer profile.  This error has been logged.'));
+    watchdog('uc_cim', t('Error assigning new payment profile to order !order_id.  The selected payment profile !profile_id could not be matched to the customer profile !customer_id.'), array('!order_id' => $order->order_id, '!profile_id' => $ppid, '!customer_id' => $order->uid), WATCHDOG_ERROR);
+  }
+}
+
+/**
+ * Update the billing address for an order when the order payment profile
+ * is changed.
+ */
+function uc_cim_update_order_billing_address( &$order ) {
+  $response = get_customer_payment_profile_request(uc_cim_get_profile_id($order->uid), $order->cim_ppid);
+  if ($response->messages->message->code == 'I00001') {
+    $order->billing_first_name = (string)$response->paymentProfile->billTo->firstName;
+    $order->billing_last_name = (string)$response->paymentProfile->billTo->lastName;
+    $order->billing_company = (string)$response->paymentProfile->billTo->company;
+    $order->billing_street1 = (string)$response->paymentProfile->billTo->address;
+    $order->billing_city = (string)$response->paymentProfile->billTo->city;
+
+    $country_name = (string)$response->paymentProfile->billTo->country;
+    $country_id = db_result(db_query("SELECT country_id FROM {uc_countries} WHERE country_name LIKE '%s'", $country_name));
+    if ($country_id) {
+      $order->billing_country = $country_id;
+      $state = (string)$response->paymentProfile->billTo->state;
+      $zone_id = db_result(db_query("SELECT zone_id FROM {uc_zones} WHERE zone_country_id=%d AND zone_code LIKE '%s'", $country_id, strtoupper($state)));
+      if ($zone_id) {
+        $order->billing_zone = $zone_id;
+      }
+    }
+    $order->billing_postal_code = (string)$response->paymentProfile->billTo->zip;
+    $order->billing_phone = (string)$response->paymentProfile->billTo->phoneNumber;
+  }
+}
+
+/**
+ * Sanitize data being passed as XML values.
+ */
+function uc_cim_xml_clean($string) {
+  return uc_cim_numeric_entities(htmlentities( $string, ENT_QUOTES, 'UTF-8' ));
+}
+
+/**
+ * Many named entities from HTML are not valid in XML, and many word-sized
+ * characters do not have named entities, so convert to numeric entities.
+ */
+function uc_cim_numeric_entities($string) {
+  static $mapping;
+  if (!$mapping) {
+    $mapping = array();
+    foreach (get_html_translation_table(HTML_ENTITIES, ENT_QUOTES) as $char => $entity) {
+      $mapping[$entity] = '&#'. ord($char) .';';
+    }
+  }
+  $string = str_replace(array_keys($mapping), $mapping, $string);
+  // multibyte characters > 0xFF may not work
+  //$string = mb_encode_numericentity ($string, array (0x0100, 0xffff, 0x0100, 0xffff), 'UTF-8');
+  return $string;
+}
+
+/**
+ * Implementation of hook_cron().
+ */
+function uc_cim_cron() {
+  // notify customers & admin of credit card expiration
+  $sql = 'SELECT * FROM {'. uc_cim_table('uc_cim_payment_profiles') .'} p LEFT JOIN {'. uc_cim_table('uc_cim') .'} c USING(customer_profile_id) LEFT JOIN {users} u USING( uid ) WHERE cc_exp_year <= %d AND cc_exp_month <= %d AND exp_notification IS NULL';
+  $result = db_query($sql, date('Y'), date('m'));
+  while ($row = db_fetch_object($result)) {
+    $account = user_load(array('uid' => $row->uid));
+    ca_pull_trigger('uc_cim_notify_expiring', $account, $row);
+  }
+}
+
+
+/**
+ * Optionally send notification on critical error, such as Authorize.net
+ * not responding.
+ * Sends to configured address, or store admin address if none is configured,
+ * or site admin address if no store admin is configured.
+ */
+function uc_cim_notify_error($error_type, $error_message) {
+  if (variable_get('uc_cim_send_error_notifications', 1) && flood_is_allowed('cim_error_notice', variable_get('uc_cim_hourly_threshold', 3))) {
+    $params['error_type'] = $error_type;
+    $params['error_message'] = $error_message;
+    $to = variable_get('uc_cim_error_notifications_to', '');
+    if (!$to) {
+      if (!$to) {
+        $account = user_load(array('uid' => 1));
+        $to = $account->mail;
+      }
+    }
+    if ($to) {
+      drupal_mail('uc_cim', 'error_notice', $to, language_default(), $params, NULL, TRUE);
+      flood_register_event('cim_error_notice');
+    }
+  }
+}
+
+/**
+ * Send notification emails.
+ * TODO:
+ *   [ ] move subjects and bodies into variables set in admin interface
+ */
+function uc_cim_mail($key, &$message, $params) {
+  $language = $message['language'];
+  switch ($key) {
+    case 'error_notice':
+      $variables = array(
+        '!site' => check_plain( variable_get('site_name', 'your website') ),
+        '!error_type' => check_plain( $params['error_type'] ),
+        '!error_message' => check_plain( $params['error_message'] ),
+      );
+      $message['subject'] = t('Notification from !site', $variables, $language->language);
+      $message['body'][] = t("An error has occurred while attempting to communicate with Authorize.net.\nThe site may be unable to process credit cards and/or customer information management functions.\n\nError type: !error_type\nError message: !error_message\n\n", $variables, $language->language);
+      break;
+  }
+}
+
+
+/**
+ * Implementation of hook_token_values().
+ */
+function uc_cim_token_values($type, $object = NULL, $options = array()) {
+  if ($type == 'uc_cim_payment_profile') {
+    $payment_profile = $object;
+    $tokens['uid'] = $payment_profile->uid;
+    $tokens['customer-profile-id'] = $payment_profile->customer_profile_id;
+    $tokens['payment-profile-id'] = $payment_profile->customer_payment_profile_id;
+    $tokens['last-four'] = sprintf( "%04d", $payment_profile->last_four );
+    $tokens['card-type'] = check_plain($payment_profile->cc_type);
+    $tokens['expiration-year'] = sprintf( "%04d", $payment_profile->cc_exp_year );
+    $tokens['expiration-month'] = sprintf( "%02d", $payment_profile->cc_exp_month );
+    if ( $payment_profile->cc_exp_year <= date('Y') && $payment_profile->cc_exp_month < date('m')) {
+      $tokens['expiration-message'] = t('expired on @m/@y', array('@m' => sprintf( "%02d", $payment_profile->cc_exp_month ), '@y' => sprintf( "%04d", $payment_profile->cc_exp_year )));
+    }
+    else {
+      $tokens['expiration-message'] = t('will expire on @m/@y', array('@m' => sprintf( "%02d", $payment_profile->cc_exp_month ), '@y' => sprintf( "%04d", $payment_profile->cc_exp_year )));
+    }
+    $tokens['payment-profile-edit-link'] = l(t('edit your billing information'), 'user/billing/'. $payment_profile->customer_payment_profile_id, array('absolute' => TRUE));
+    return $tokens;
+  }
+}
+
+/**
+ * Implementation of hook_token_list().
+ */
+function uc_cim_token_list($type = 'all') {
+  if ($type == 'uc_cim_payment_profile' || $type == 'all') {
+    $tokens['uc_cim_payment_profile']['uid'] = t('The user id of the payment profile');
+    $tokens['uc_cim_payment_profile']['customer-profile-id'] = t('The CIM customer profile id of the user');
+    $tokens['uc_cim_payment_profile']['payment-profile-id'] = t('The CIM payment profile id of this credit card');
+    $tokens['uc_cim_payment_profile']['last-four'] = t('Last four digits of the credit card');
+    $tokens['uc_cim_payment_profile']['card-type'] = t('Credit card type, if known');
+    $tokens['uc_cim_payment_profile']['expiration-year'] = t('Expiration year of this credit card');
+    $tokens['uc_cim_payment_profile']['expiration-month'] = t('Expiration month of this credit card');
+    $tokens['uc_cim_payment_profile']['expiration-message'] = t('Expiration message, depending on date.  Either "will expire on mm/yyyy" or "expired on mm/yyyy".');
+    $tokens['uc_cim_payment_profile']['payment-profile-edit-link'] = t('Link to edit billing info.');
+    return $tokens;
+  }
+}
