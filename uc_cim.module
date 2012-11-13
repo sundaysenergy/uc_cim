@@ -10,11 +10,11 @@
  * Merchant Account, please contact chadcrew  gmail.com
  *
  * Ported by justindodge
- * 
+ *
  * Patched, revised, and extended by RSTaylor
  *
- * 2010/09/22 Ported, revised and extended by jaypark at drupal, neunetllc at gmail 
- * feel free to contact me for help, or just to say hi :) 
+ * 2010/09/22 Ported, revised and extended by jaypark at drupal, neunetllc at gmail
+ * feel free to contact me for help, or just to say hi :)
  *
  * TODO:
  *   [ ] Admin report of card expiration dates
@@ -65,9 +65,9 @@ function uc_cim_recurring_process($order, &$fee){
 // case: convert hook_renew $fee obj to array
 function uc_cim_object_to_array($data){
   if(is_array($data) || is_object($data)){
-    $result = array(); 
-    foreach($data as $key => $value){ 
-      $result[$key] = uc_cim_object_to_array($value); 
+    $result = array();
+    foreach($data as $key => $value){
+      $result[$key] = uc_cim_object_to_array($value);
     }
     return $result;
   }
@@ -75,7 +75,7 @@ function uc_cim_object_to_array($data){
 }
 
 /**
- * Implementation of hook_user(). 
+ * Implementation of hook_user().
  * For subscriptions that grant roles, check to see if the role is active
  */
 /*  function uc_cim_user($op, &$edit, &$account, $category = NULL) {
@@ -122,12 +122,12 @@ function uc_cim_object_to_array($data){
      }
    }
  }
- //check db product role purchased against the actual user roles and 
+ //check db product role purchased against the actual user roles and
  //set some session vars to do stuff
  function uc_cim_get_fee_vars(){
-   
+
    global $user;
-   //query assumes each user will have only 1 active subscription at any given time 
+   //query assumes each user will have only 1 active subscription at any given time
    //and the last purchased subscription created is the active subscription.
    $sql = "select u.rfid, u.order_id, u.fee_handler, r.rid from uc_roles_products r left join (uc_recurring_users u, uc_order_products p) on (u.order_id=p.order_id and p.nid=r.nid) where u.uid=%d order by u.created desc limit 0,1";
    $result = db_query($sql, $user->uid);
@@ -137,7 +137,7 @@ function uc_cim_object_to_array($data){
      return $orf;
    }
    return FALSE;
- } 
+ }
 /**
  * call only when either a credit card has been updated or added for an expired recurring order
  * $cpid:=customer profile id
@@ -171,7 +171,7 @@ function uc_cim_object_to_array($data){
            $result = db_query($sql, $order->order_id, $ppid);
          }
        }
-       //@todo:call uc_recurring_uc_cim_renew($order, $fee); 
+       //@todo:call uc_recurring_uc_cim_renew($order, $fee);
        //or wait until next cron.
        $_SESSION['uc_cim_session_fee_renew'] = true;
        return true;
@@ -587,7 +587,7 @@ function uc_cim_manage_page_form($form_state, $user) {
     $submit_t = 'Save New Card and Renew Subscription';
   }else{
     $submit_t = 'Save New Card';
-  }                                          
+  }
   //$submit_t = 'Save new card';
   $form['submit'] = array(
     '#type' => 'submit',
@@ -651,7 +651,7 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
       //watchdog('uc_cim','payment_profile_id, data[ppid]: '.print_r($data['ppid'],true));
     }
   }
-//<nnllc  
+//<nnllc
 //watchdog('uc_cim','data: '.print_r($data,true));
   //Check if the user is logged in.
   if ($order->uid == 0) { //Customer
@@ -746,7 +746,7 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
       $profile_id = $response->customerProfileId;
     }
 
-    
+
     elseif ($response->messages->message->code == 'E00039') {
         // Authorize.net already has a customer profile for this user and
         // won't let us create a new one, so let's load our database from that.
@@ -772,9 +772,9 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
 
   // need to not just get an existing profile_id!! need to get the one that's associated with
   // the cc on the order!! otherwise create a NEW one!!
-  
+
   //If there is a CIM id and a payment profile id, load the saved profile
-  //<nnllc:bug! $payment_profile_id is not set in this function scope by _renew() - $data==null -  so it will not be 0 but it won't be a valid id either. 
+  //<nnllc:bug! $payment_profile_id is not set in this function scope by _renew() - $data==null -  so it will not be 0 but it won't be a valid id either.
   if ($profile_id && ($payment_profile_id != 0)) {
     $profile = uc_cim_get_payment_profiles($profile_id, $payment_profile_id);
   }
@@ -797,14 +797,12 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
       }
     }
 
-  
-
     //If there's no payment profile, create it now
     if ($profile_id && !$payment_profile_id) {
       $response = create_customer_payment_profile_request($profile_id, $order);
       $payment_profile_id = $response->customerPaymentProfileId;
       $new_cim_ppid = TRUE;
-    
+
       //<nnllc
       $strip_ppid = strip_tags($payment_profile_id);
       $cim_pp = array('profile_id' => $profile_id, 'payment_profile_id' => $strip_ppid);
@@ -812,7 +810,7 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
       //watchdog('uc_cim', print_r('create_customer_payment_profile_request response: '.$response,true));
     }
   }
-  
+
   //Process transaction using the payment profile. If it's a $0 order (and it's not a new cim_ppid, which was just validated), just validate the profile.
   if ($profile_id && $payment_profile_id != 0 && $amount > 0) {
 
@@ -935,8 +933,8 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
   $result['cim_ppid'] = $payment_profile_id;
   //Add cim profile data to returned array
   $result['cim_pp'] = $cim_pp;
-  
-  
+
+
   return $result;
 }
 
@@ -1737,7 +1735,7 @@ function uc_cim_edit_card_form_submit(&$form, &$form_state) {
   //Update payment profile
   if (is_numeric($formvalues['payment_profile_id'])) {
     $response = update_customer_payment_profile_request($formvalues['profile_id'], $order, $formvalues['payment_profile_id']);
-    
+
     //<nnllc:updating order referencing the same profile; profile vals are not needed
     $uc_cim_session_fee_renew = uc_cim_session_fee_renew();
     //nnllc>
@@ -1755,7 +1753,7 @@ function uc_cim_edit_card_form_submit(&$form, &$form_state) {
   }
   else {
     drupal_set_message('Billing information successfully updated.');
-    
+
   }
 
   $form_state['redirect'] = $_GET['dest'];
@@ -1925,7 +1923,7 @@ function uc_recurring_cim_fee($order, &$fee) {
  * Callback to process a recurring renewal
  */
 function uc_recurring_uc_cim_renew($order, $fee) {
-  // ensure that fee is transform to an array 
+  // ensure that fee is transform to an array
   $fee = uc_cim_object_to_array($fee);
   // make sure the originating (fee) order id is being used for the ppid retrieval
   $original_order = uc_order_load($fee['order_id']);
@@ -1947,7 +1945,7 @@ function uc_recurring_uc_cim_renew($order, $fee) {
   if ($ppid) {
     // Run the charge.
     //<nnllc:bug!squashed. if $ppid is true, pass it here through $data - why wasn't it getting passed before?
-    //handle case where uc_cim_get_payment_profiles returns a profile indexed within an array 
+    //handle case where uc_cim_get_payment_profiles returns a profile indexed within an array
     //should fix consistency in return format
     if (!empty($ppid[customer_payment_profile_id])){
       $data['ppid'] = $ppid[customer_payment_profile_id];
@@ -2152,8 +2150,8 @@ function create_customer_payment_profile_request($profile_id, $order) {
 
   //Process the response and save the profile
   $last_four = substr($order->payment_details['cc_number'], -4);
-  
-  
+
+
   if ($payment_profile_id = $response->customerPaymentProfileId) {
     //Get the payment profile id from the response and save it
     uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $order->payment_details['cc_type'], $order->payment_details['cc_exp_year'], $order->payment_details['cc_exp_month']);
@@ -2262,7 +2260,7 @@ function create_customer_profile_transaction_request($profile_id, $payment_profi
     $cvv = '<cardCode>'. $order->payment_details['cc_cvv']. '</cardCode>';
   }
   else $cvv = ''; */
-  
+
   //Build XML to post
   $content =
   '<?xml version="1.0" encoding="utf-8"?>'.
@@ -2758,42 +2756,42 @@ function uc_cim_switch_payment_profile_form(&$form_state, $order, $profile = NUL
   //and for which the fee handler is cim, in case migration from authorizenet_arb
   $sql = "SELECT fee_handler FROM {uc_recurring_users} WHERE order_id = %d";
   $result = db_query($sql, $order->order_id);
-  $fh = db_fetch_object($result);        
-  
+  $fh = db_fetch_object($result);
+
   if(!empty($fh) && $fh->fee_handler == 'cim') {
   //nnllc>
     $customer_profile_id = uc_cim_get_profile_id($order->uid);
     $payment_profiles = uc_cim_get_payment_profiles($customer_profile_id);
-  
+
     if (!is_array($payment_profiles)) {
     drupal_set_message(t('You can enter a credit card on the !link page.  Then you will be able to select it here to apply it to this subscription order.', array('!link' => l(t('manage credit cards'), 'user/'. $order->uid .'/creditcards'))));
     return array();
     }
-  
+
     $options = array();
-  
+
     foreach ( $payment_profiles as $payment_profile ) {
     $options[$payment_profile['customer_payment_profile_id']] = $payment_profile['cc_type'] .': xxxx'. $payment_profile['last_four'] .' (Exp: '. $payment_profile['cc_exp_month'] .'/'. $payment_profile['cc_exp_year'] .')';
     }
-  
+
     $form['order_id'] = array(
     '#type' => 'value',
     '#value' => $order->order_id,
     );
-  
+
     $form['ppid'] = array(
     '#title' => t('Payment profile'),
     '#type' => 'select',
     '#options' => $options,
     '#description' => t('Select a credit card from those that you have entered at the !link page.  Future charges for this subscription order will be applied against this card.  This will not affect past charges.', array('!link' => l(t('manage credit cards'), 'user/'. $order->uid .'/creditcards'))),
     );
-  
+
     $form['submit_card'] = array(
     '#type' => 'submit',
     '#value' => t('Use this card for this subscription'),
     );
     return $form;
-  }  
+  }
 }
 
 /**
@@ -2824,7 +2822,7 @@ function uc_cim_switch_payment_profile_form_submit(&$form, &$form_state) {
       if (db_affected_rows() == 0) {
         db_query("INSERT INTO {uc_payment_cim} (order_id, cim_ppid) VALUES (%d, %d)", $order->order_id, $order->cim_ppid);
       }
-      //<nnllc:provide a bit more info on what just happened. 
+      //<nnllc:provide a bit more info on what just happened.
       drupal_set_message(t('Payment profile for subscription order '.$order_id.' updated.'));
     }
     else {
