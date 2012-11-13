@@ -13,6 +13,9 @@
  * 
  * Patched, revised, and extended by RSTaylor
  *
+ * 2010/09/22 Ported, revised and extended by jaypark at drupal, neunetllc at gmail 
+ * feel free to contact me for help, or just to say hi :) 
+ *
  * TODO:
  *   [ ] Admin report of card expiration dates
  */
@@ -644,9 +647,12 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
     $data = unserialize($data);
     if ($data['ppid']) {
       $payment_profile_id = $data['ppid'];
+      //<nnllc
+      //watchdog('uc_cim','payment_profile_id, data[ppid]: '.print_r($data['ppid'],true));
     }
   }
-
+//<nnllc  
+//watchdog('uc_cim','data: '.print_r($data,true));
   //Check if the user is logged in.
   if ($order->uid == 0) { //Customer
     if ($user->uid == 0) { //Anonymous - setup their account
@@ -739,6 +745,8 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
     if ($response->messages->message->code == 'I00001') {
       $profile_id = $response->customerProfileId;
     }
+
+		
     elseif ($response->messages->message->code == 'E00039') {
         // Authorize.net already has a customer profile for this user and
         // won't let us create a new one, so let's load our database from that.
@@ -784,7 +792,7 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
           $payment_profile_id = $profile['customer_payment_profile_id'];
           //Update our CIM stored data with the information entered to make sure it's accurate
           $response = update_customer_payment_profile_request($profile_id, $order, $payment_profile_id);
-          #dpm('uc_cim mn5', 'hi');
+					dpm('uc_cim mn5', 'hi');
           break;
         }
       }
@@ -795,7 +803,7 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
 	  //If there's no payment profile, create it now
 	  if ($profile_id && !$payment_profile_id) {
 	    $response = create_customer_payment_profile_request($profile_id, $order);
-			#dpm('uc_cim mn4', 'hi');
+			dpm('uc_cim mn4', 'hi');
 	    $payment_profile_id = $response->customerPaymentProfileId;
 	    $new_cim_ppid = TRUE;
     
@@ -813,16 +821,21 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
     //If we're in test mode (not developer test mode or production) just validate the card.  The best we can do...
     if (variable_get('cim_transaction_mode', 'test') == 'test_mode') $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
     else $response = create_customer_profile_transaction_request($profile_id, $payment_profile_id, $order, $amount);
+		dpm('uc_cim mn3', 'hi');
 
   }
   elseif ($profile_id && $payment_profile_id != 0 && $amount <= 0 && !$new_cim_ppid) {
     $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
+		
+		dpm('uc_cim mn8', 'hi');
   }
 
   if ($response) {
     $gateway_message = (string)$response->messages->message->text;
   }
   else {
+		
+		dpm('uc_cim mn9', 'hi');
     $gateway_message = t('Invalid response from gateway.');
   }
 
@@ -1001,7 +1014,6 @@ function uc_cim_management() {
 }
 //CHECKOUT and ORDER screens
 function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-cim-billing-address-billing', $delivery_path = 'panes-delivery-delivery') {
-
   //Add our css and revised javascript for copying addresses to our revised address form
   drupal_add_js(drupal_get_path('module', 'uc_cim') .'/uc_cim.js');
   drupal_add_css(drupal_get_path('module', 'uc_cim') .'/uc_cim.css');
@@ -1062,7 +1074,6 @@ function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-c
 
   //Get the billing address form
   $billing_form_temp = uc_checkout_pane_billing('view', $order, NULL);
-  // This is going to cause problems with the normal form.
 
   //Remove the required tag, if there are existing credit cards
   if ($existing_cards_form) {
@@ -1079,7 +1090,6 @@ function uc_cim_credit_card_form($user_id, $order, $address_book_path = 'panes-c
     '#collapsible' => TRUE,
     '#collapsed' => FALSE,
     '#theme' => $billing_form_temp['theme'],
-    '#tree' => TRUE, // TEMPORARY HACK!
     '#suffix' => '</div>',
   );
   $address_form['billing_address'] = array_merge($billing_form['billing_address'], $billing_form_temp['contents']);
@@ -1398,7 +1408,8 @@ function uc_order_pane_cim($op, $arg1) {
         }
         else drupal_set_message($result['message'], 'error');
       }
-
+      //<nnllc
+      $changes['uc_cim_charge_result'] = $result;
       return $changes;
 
   }
@@ -1751,6 +1762,7 @@ function uc_cim_edit_card_form_submit(&$form, &$form_state) {
   }
   else {
     drupal_set_message('Billing information successfully updated.');
+    
   }
 
   $form_state['redirect'] = $_GET['dest'];
@@ -2088,7 +2100,7 @@ function create_customer_profile_request($user_id) {
   }
   else {
     $message = 'Customer profile could not be created. User: '. $user_id .', Error: '. $response->messages->message->text;
-    watchdog('uc_cim', $message, array(), WATCHDOG_WARNING);
+    watchdog('uc_cim2', $message, array(), WATCHDOG_WARNING);
   }
 
   return $response;
@@ -2147,7 +2159,8 @@ function create_customer_payment_profile_request($profile_id, $order) {
 
   //Process the response and save the profile
   $last_four = substr($order->payment_details['cc_number'], -4);
-
+	
+	
   if ($payment_profile_id = $response->customerPaymentProfileId) {
     //Get the payment profile id from the response and save it
     uc_cim_save_payment_profile($profile_id, $payment_profile_id, $last_four, $order->payment_details['cc_type'], $order->payment_details['cc_exp_year'], $order->payment_details['cc_exp_month']);
@@ -2218,7 +2231,7 @@ function update_customer_payment_profile_request($profile_id, $order, $payment_p
   else {
     //If that didn't work, we've got a problem...
     $message = 'Customer payment profile could not be created. User: '. $order->uid .', Error: '. $response->messages->message->text;
-    watchdog('uc_cim', $message, array(), WATCHDOG_WARNING);
+    watchdog('uc_cim1', $message, array(), WATCHDOG_WARNING);
   }
 
   return $response;
@@ -2256,7 +2269,7 @@ function create_customer_profile_transaction_request($profile_id, $payment_profi
     $cvv = '<cardCode>'. $order->payment_details['cc_cvv']. '</cardCode>';
   }
   else $cvv = ''; */
-
+	
   //Build XML to post
   $content =
   '<?xml version="1.0" encoding="utf-8"?>'.
