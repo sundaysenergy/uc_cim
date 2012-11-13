@@ -792,7 +792,6 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
           $payment_profile_id = $profile['customer_payment_profile_id'];
           //Update our CIM stored data with the information entered to make sure it's accurate
           $response = update_customer_payment_profile_request($profile_id, $order, $payment_profile_id);
-          dpm('uc_cim mn5', 'hi');
           break;
         }
       }
@@ -803,7 +802,6 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
     //If there's no payment profile, create it now
     if ($profile_id && !$payment_profile_id) {
       $response = create_customer_payment_profile_request($profile_id, $order);
-      dpm('uc_cim mn4', 'hi');
       $payment_profile_id = $response->customerPaymentProfileId;
       $new_cim_ppid = TRUE;
     
@@ -821,21 +819,16 @@ function uc_cim_charge($order_id, $amount, $data = NULL, $update_cim_order_table
     //If we're in test mode (not developer test mode or production) just validate the card.  The best we can do...
     if (variable_get('cim_transaction_mode', 'test') == 'test_mode') $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
     else $response = create_customer_profile_transaction_request($profile_id, $payment_profile_id, $order, $amount);
-    dpm('uc_cim mn3', 'hi');
 
   }
   elseif ($profile_id && $payment_profile_id != 0 && $amount <= 0 && !$new_cim_ppid) {
     $response = validate_customer_payment_profile_request($profile_id, $payment_profile_id);
-    
-    dpm('uc_cim mn8', 'hi');
   }
 
   if ($response) {
     $gateway_message = (string)$response->messages->message->text;
   }
   else {
-    
-    dpm('uc_cim mn9', 'hi');
     $gateway_message = t('Invalid response from gateway.');
   }
 
