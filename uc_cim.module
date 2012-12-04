@@ -1930,9 +1930,17 @@ function uc_recurring_uc_cim_renew($order, $fee) {
   // check that payment profile still exists first
   // this customer profile id is valid because 1:1::cpid:drupal_uid
   $profile_id = uc_cim_get_profile_id($order->uid);
+  $tokens = array(
+    '@pid' => $profile_id,
+    '@fee_order_id' => $fee['order_id'],
+  );
   if ($profile_id) {
+    watchdog('uc_cim', 'uc_recurring_uc_cim_renew found a profile_id (@pid)', $tokens);
     //in this case, uc_cim_get_payment_profiles() returns at most a single payment profile
     $ppid = uc_cim_get_payment_profiles($profile_id, $original_order->cim_ppid);
+  }
+  else {
+    watchdog('uc_cim', 'uc_recurring_uc_cim_renew could not find the profile_id.' . print_r(array($order, $fee), TRUE), $tokens);
   }
 //<nnllc $order doesn't have ppid, isn't passed in $data, which is where _charge() looks for it.
 //the $order passed here is the new $order, not the originating one. so when _charge() is called
@@ -1960,9 +1968,14 @@ function uc_recurring_uc_cim_renew($order, $fee) {
     module_invoke_all('gateway_renew_response', 'uc_cim', $order, $result['gateway_message'], $result['bank_message']);
   }
   else {
-    watchdog('uc_cim', 'Order !order does not have a valid payment profile (!ppid) associated with it.', array('!ppid' => $order->cim_ppid, '!order' => $order->order_id), WATCHDOG_ERROR, l(t('Order #!order', array('!order' => $order->order_id)), 'admin/store/orders/'. $order->order_id));
+    $tokens += array(
+      '!ppid' => $order->cim_ppid,
+      '!order' => $order->order_id,
+      '!profile_id' => l((int) $profile_id, 'admin/store/customers/cim/'. (int) $profile_id)
+    );
+    watchdog('uc_cim', 'Order !order does not have a valid payment profile (!ppid) associated with it.', $tokens, WATCHDOG_ERROR, l(t('Order #!order', array('!order' => $order->order_id)), 'admin/store/orders/'. $order->order_id));
 
-    uc_order_comment_save($order->order_id, 0, t('Order does not have a valid payment profile (!ppid) for customer !profile_id associated with it.', array('!ppid' => $order->cim_ppid, '!profile_id' => l((int)$profile_id, 'admin/store/customers/cim/'. (int)$profile_id))));
+    uc_order_comment_save($order->order_id, 0, t('Order does not have a valid payment profile (!ppid) for customer !profile_id associated with it.', $tokens));
 
     $message = t('Order !order does not have a valid payment profile (!ppid) associated with it.', array('!order' => $order->order_id, '!ppid' => $order->cim_ppid));
     $result = array(
